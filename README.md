@@ -24,6 +24,9 @@ A Claude Code skill that merges two job-search pipelines behind one router, tune
 
 - **Cheaper models where it's safe.** career-ops' `spend_tier` maps to the subagent model (haiku / sonnet / opus). Track A research agents run on Sonnet, while the main thread keeps the review and 8/8 pitch gate. At most 2 agents run at once.
 - **Both tracks in parallel.** One subagent per track, and the main thread keeps the browser work. `jh.py claim <company> --track A|B` is an atomic lock, so the two never take the same company.
+- **Several people, one machine.** `jh.py people` lists every campaign. Each `profile.toml` has a `[job_hunt]` section tying that person's workspace to their career-ops data folder and Chrome device, so nothing crosses between people.
+- **Dedupe before research.** `jh.py taken --out TAKEN.tsv` gives research agents one file listing everything already done: sends, excludes, earlier rounds' research verdicts, other campaigns and the tracker.
+- **Learns from use.** Every failure or correction becomes a fix, a line in `LESSONS.md` and, where testable, a `jh.py verify` check.
 - **No double contact.** `jh.py check A B C` checks a whole list at once against SEND-LOG, EXCLUDE and the career-ops tracker. `push-sends` copies cold emails into the tracker, numbered by career-ops' own allocator when its deps are installed.
 - **Never ships broken.** `jh.py verify` compiles every script, checks JSON and the SKILL.md frontmatter, confirms every file SKILL.md names exists and `core/` is fresh, and smoke-tests the bridge on throwaway data.
 
@@ -64,7 +67,8 @@ Prompts for Track A are in `cold-outreach/PROMPTS.md`. Track B modes are listed 
 
 ```
 SKILL.md                    router, fast paths, combined flows, shared rules
-jh.py                       status | check | claim/release/claims | push-sends | where | build | verify | cost
+jh.py                       status | people | taken | check | claim/release/claims | push-sends | where | build | verify | cost
+LESSONS.md                  what real runs taught, one line each
 core/                       generated exact extracts of career-ops' router + AGENTS.md
 tools/build_core.py         builds core/ (rules for core / on-demand / left out)
 scripts/sync-career-ops.sh  refresh the vendored career-ops, then rebuild core/

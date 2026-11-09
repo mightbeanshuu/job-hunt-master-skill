@@ -118,3 +118,9 @@ yc_waas_logged_in = false                # the user must log in themselves
 
 [workspace]
 path = "~/Documents/cold-email"
+
+[job_hunt]                                 # used by the job-hunt master skill (jh.py)
+career_ops_data_root = "~/career-ops-data" # this person's career-ops DATA_ROOT (one per person)
+chrome_device = ""                         # first 8 chars of this person's Claude in Chrome deviceId
+also_skip_workspaces = []                  # other people's workspaces whose sent companies to skip
+extra_taken_files = []                     # extra company lists (comma or newline separated) to skip

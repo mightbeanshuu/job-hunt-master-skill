@@ -11,12 +11,15 @@ description: Master job-search skill (merges cold-outreach and career-ops). Trac
 cold-outreach/   Track A: PIPELINE.md (workflow + hard rules), references/, scripts/, assets/, hud/
 career-ops/      Track B: career-ops 1.39.0, vendored upstream (MIT). Never edit; see UPSTREAM.md
 core/            exact extracts of career-ops' router and AGENTS.md: read these instead of the originals
-jh.py            status · check · claim/release/claims · push-sends · where · build · verify · cost
+jh.py            status · people · taken · check · claim/release/claims · push-sends · where · build · verify · cost
+LESSONS.md       what real runs taught, one line each (not loaded at runtime)
 ```
 
 ## 0. Session start: one call
 
-Run `jh status` and show it in a ```text block. It prints both tracks at once: the Track A dashboard (today vs. daily range, bounces vs. kill switch, follow-ups due, replies), whether career-ops' deps and data are set up, the tracker counts, and the cold sends not yet in the tracker. Don't run `stats.py` again at the start of the session.
+Run `jh status` and show it in a ```text block. It prints both tracks at once: the Track A dashboard (today vs. daily range, bounces vs. kill switch, overdue follow-ups), whether career-ops' deps and data are set up, the tracker counts, and the cold sends not yet in the tracker. Don't run `stats.py` again at the start of the session.
+
+**Several people on one machine:** `jh people` lists every campaign (sender, workspace, career-ops data, Chrome device, follow-ups due). If there's more than one, settle whose session it is from the request, or ask. Then pass `--workspace <ws>` to every `jh` and cold-outreach script call: the profile's `[job_hunt]` section supplies that person's career-ops data folder, the campaigns to skip, and their `chrome_device`. Before any Chrome action, the connected browser's deviceId must start with `chrome_device`. If it doesn't, stop and ask. Never act in another person's browser or Gmail.
 
 ## 1. Route
 
@@ -44,7 +47,7 @@ Open a reference only when you reach its step:
 | reveals | `contacts.md` → Fallback: reveal tools |
 
 Added by the merge:
-- **Dedupe across tracks:** run one batched `jh check "A" "B" "C" …` over the round's candidates before G4. A HIT is a FAIL with reason `already-in-pipeline`, unless the user overrides it.
+- **Dedupe before research, not after:** write `jh taken --out <round_dir>/TAKEN.tsv` when creating the round. It covers sends, EXCLUDE, never_contact, every earlier round's research verdicts, extra lists, other campaigns and the tracker. Agents grep it (or `jh check "<Company>"`) before spending any time on a company. A HIT is a FAIL with reason `already-in-pipeline`, unless the user overrides it.
 - **Log to the shared tracker:** after each `log_sent.py`, run `jh push-sends`.
 - **Research agents:** at most 2 (the user's cap). Run them with `model: "sonnet"`. The main thread still does Step 4 review and the 8/8 pitch test, so quality is gated where it counts.
 
@@ -74,6 +77,7 @@ When the user wants both, or says "parallel", run each track as **one background
 2. While they run, the main thread does the Chrome-bound work, one step at a time: reveals for Worker A's NEED-REVEAL lines, bounce and reply checks, follow-ups.
 3. When both return: Track A Step 4 review and the send question; then Track B results (scores ≥ 4.0 → offer `pdf`). Run `jh push-sends`, then `jh release --all-track B` (Track A claims go away once the email is logged).
 4. Either track also runs alone: Track A never needs career-ops deps, and Track B never needs Chrome or `profile.toml`.
+5. **Track B not set up yet** (`jh status` lists missing files): start Worker A right away, do Track B onboarding in the main thread meanwhile (draft from the person's profile and resume, show it, write on yes), then start Worker B.
 
 ## 5. Combined flows
 
@@ -94,4 +98,12 @@ When the user wants both, or says "parallel", run each track as **one background
 
 Run `jh status` again in a ```text block, then report sends, replies, waiting-on-user items and next due dates. Names and numbers first, short.
 
-Maintaining this skill: after editing any file, `jh verify` must print ALL GREEN before a commit. After a career-ops sync or an edit to `tools/build_core.py`, run `jh build`. `jh cost` shows how much context each request type loads.
+## 8. Learning loop: the skill improves from use
+
+When a run hits a failure, needs a workaround, or the user corrects you:
+1. Fix the cause in the skill: prefer a `jh.py` or script change over more SKILL.md text, and keep this file lean.
+2. Add one line to `LESSONS.md`: `date · what happened · fix`.
+3. If it's testable, add a check to `jh verify` (the race and dedupe checks came from real runs).
+4. `jh verify` must print ALL GREEN, then commit and push.
+
+After a career-ops sync or an edit to `tools/build_core.py`, run `jh build`. `jh cost` shows how much context each request type loads.

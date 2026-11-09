@@ -7,17 +7,20 @@
   claim <co> ... --track A|B [--by w]   atomic claim before working a company, so both tracks
                             can run in parallel and never take the same one; exit 1 = taken
   release <co> ... | --all-track A|B     drop claims (company failed a gate / run ended)
-  claims                    list open claims (auto-expire after 3 days)
+  claims                    list open claims (per workspace; auto-expire after 3 days)
   push-sends [--dry-run] [--no-merge]    cold emails from SEND-LOG -> career-ops tracker,
                             then merge-tracker (one call when career-ops deps are installed)
+  people                    every campaign on this machine: sender, workspace, data root, Chrome device, FU due
+  taken [--out FILE]        everything already taken for this person (sends, excludes, prior research,
+                            other campaigns, tracker) as one greppable file for research agents
   where                     resolved paths
   build                     regenerate core/ after editing or syncing career-ops
   verify                    syntax + freshness + smoke tests; run before every commit
   cost                      context each request type loads, now vs. reading upstream files whole
 
-Options: --workspace <dir>  cold-outreach workspace ($OUTREACH_WS, else ~/Documents/cold-email)
-         --data-root <dir>  career-ops DATA_ROOT ($CAREER_OPS_ROOT / $CAREER_OPS_DATA_DIR,
-                            else career-ops/.career-ops-data, else ~/career-ops-data)
+Options: --workspace <dir>  whose campaign ($OUTREACH_WS, else ~/Documents/cold-email)
+         --data-root <dir>  career-ops DATA_ROOT ($CAREER_OPS_ROOT, else the workspace profile's
+                            [job_hunt].career_ops_data_root, else career-ops/.career-ops-data, else ~/career-ops-data)
 """
 import csv, json, os, re, shutil, subprocess, sys, tempfile, time
 from collections import Counter
@@ -56,9 +59,25 @@ def pop(argv, flag):
     return None
 
 
+def load_prof(ws):
+    try:
+        import tomllib
+        return tomllib.loads((ws / "profile.toml").read_text())
+    except Exception:
+        return {}
+
+
+def jh_conf(ws):
+    """[job_hunt] in the person's profile.toml: career_ops_data_root, chrome_device,
+    also_skip_workspaces, extra_taken_files. Ties one person's workspace, data and browser together."""
+    return load_prof(ws).get("job_hunt", {})
+
+
 def roots(argv):
     ws = pop(argv, "--workspace") or os.environ.get("OUTREACH_WS") or "~/Documents/cold-email"
     dr = pop(argv, "--data-root") or os.environ.get("CAREER_OPS_ROOT") or os.environ.get("CAREER_OPS_DATA_DIR")
+    if not dr:
+        dr = jh_conf(Path(os.path.expanduser(ws))).get("career_ops_data_root")
     if not dr:
         marker = CO / ".career-ops-data"
         if marker.exists() and marker.read_text().strip():
@@ -167,6 +186,21 @@ def cmd_status(ws, dr):
             print("  " + l)
         if r.returncode == 2:
             print("  ⚠ kill switch tripped: no new cold sends today")
+        try:
+            from common import followups_due
+            from datetime import timedelta
+            prof = load_prof(ws)
+            q = followups_due(send_log(ws), prof, "fu1", today)[0] + followups_due(send_log(ws), prof, "fu2", today)[0]
+            rows_by = {(s.get("email") or "").lower(): s for s in send_log(ws)}
+            dues = sorted(min(rows_by.get(x["to"], {}).get("followup1_due") or today,
+                              rows_by.get(x["to"], {}).get("followup2_due") or today) for x in q)
+            if dues and dues[0] < today:
+                gone = (date.fromisoformat(dues[0]) + timedelta(days=10)).isoformat()
+                print(f"  ⚠ {len(q)} follow-ups overdue since {dues[0]}; the oldest leave the 10-day window on {gone}")
+        except Exception:
+            pass
+        dev = jh_conf(ws).get("chrome_device")
+        print(f"  chrome: {'this person = device ' + dev + '* (match list_connected_browsers before any send)' if dev else 'no [job_hunt].chrome_device in profile.toml'}")
     # Track B
     deps = (CO / "node_modules").exists()
     ver = (CO / "VERSION").read_text().split()[0] if (CO / "VERSION").exists() else "?"
@@ -185,7 +219,7 @@ def cmd_status(ws, dr):
     if adds:
         print(f"  {len(adds)} tracker additions waiting → cd {CO} && CAREER_OPS_ROOT={dr} node merge-tracker.mjs")
     # Bridge + health
-    cl = open_claims()
+    cl = open_claims(ws)
     if cl:
         c = Counter(x["track"] for x in cl.values())
         print("claims  " + " · ".join(f"Track {k} {v}" for k, v in sorted(c.items())) + "  (jh.py claims)")
@@ -199,37 +233,96 @@ def cmd_status(ws, dr):
     return 0
 
 
+def email_root(email):
+    dom = (email or "").split("@")[-1].lower()
+    return norm(dom.split(".")[0]) if "@" in (email or "") and dom.split(".")[0] not in ("gmail", "yahoo", "outlook", "hotmail", "proton", "protonmail", "icloud") else ""
+
+
+def split_names(text):
+    out = []
+    for line in text.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        out += [x.strip() for x in line.split(",") if x.strip()]
+    return out
+
+
 class Pipeline:
-    """Everything that says a company is already taken: SEND-LOG, EXCLUDE, tracker, pending additions."""
+    """Everything that says a company is already taken for this person: own SEND-LOG (company + email domain),
+    EXCLUDE, never_contact / live_threads, earlier rounds' research (any verdict), extra_taken_files,
+    other workspaces listed in also_skip_workspaces, and the career-ops tracker + pending additions."""
 
     def __init__(self, ws, dr):
+        self.reasons = {}
+
+        def add(key, why):
+            k = norm(key)
+            if k and why not in self.reasons.setdefault(k, []):
+                self.reasons[k].append(why)
+
         self.sends = send_log(ws)
+        for s in self.sends:
+            why = (f"cold-mailed {s.get('date_sent') or '?'} → {s.get('email')}"
+                   + (f" · reply: {s['reply']}" if s.get("reply") else "")
+                   + (f" · {s['outcome']}" if s.get("outcome") else ""))
+            add(s.get("company"), why)
+            add(email_root(s.get("email")), why)
         ef = ws / "EXCLUDE.txt"
-        self.excl = ({norm(x) for x in ef.read_text().splitlines() if x.strip() and not x.startswith("#")}
-                     if ef.exists() else set())
+        for x in (split_names(ef.read_text()) if ef.exists() else []):
+            add(x, "in EXCLUDE.txt")
+        prof, conf = load_prof(ws), jh_conf(ws)
+        for x in prof.get("targets", {}).get("never_contact", []):
+            add(x, "never_contact (profile)")
+        for x in prof.get("targets", {}).get("live_threads", []):
+            add(x, "live thread (profile)")
+        for f in sorted((ws / "rounds").glob("*/_research_*.tsv")) if (ws / "rounds").exists() else []:
+            rnd = f.parent.name
+            for line in f.read_text(errors="replace").splitlines():
+                cells = line.split("\t")
+                if len(cells) >= 2 and cells[0].strip():
+                    verdict = cells[-1].strip()[:70] or "researched"
+                    add(cells[0], f"researched in round {rnd}: {verdict}")
+                    add(cells[1], f"researched in round {rnd}: {verdict}")
+        for d in (ws / "rounds").glob("*/*/email.txt") if (ws / "rounds").exists() else []:
+            add(d.parent.name, f"drafted in round {d.parent.parent.name}")
+        for name in conf.get("extra_taken_files", []):
+            f = ws / os.path.expanduser(name)
+            for x in (split_names(f.read_text()) if f.exists() else []):
+                add(x, f"listed in {f.name}")
+        for other in conf.get("also_skip_workspaces", []):
+            ows = Path(os.path.expanduser(other))
+            for s in send_log(ows):
+                why = f"other campaign ({ows.name}) mailed it {s.get('date_sent') or '?'}"
+                add(s.get("company"), why)
+                add(email_root(s.get("email")), why)
         self.rows, self.adds = tracker_rows(dr), pending_additions(dr)
+        for r in self.rows:
+            add(r["company"], f"career-ops tracker #{r['num']} {r['date']} {r['role']} · {r['status']} · {r['score']}")
+        for a in self.adds:
+            add(a.get("company"), f"career-ops pending addition #{a.get('num')} {a.get('role')} · {a.get('status')}")
 
     def hits(self, company):
-        n = norm(company)
-        out = []
-        for s in self.sends:
-            if norm(s.get("company")) == n:
-                out.append(f"cold-mailed {s.get('date_sent')} → {s.get('email')}"
-                           + (f" · reply: {s['reply']}" if s.get("reply") else "")
-                           + (f" · {s['outcome']}" if s.get("outcome") else ""))
-        if n in self.excl:
-            out.append("in cold-outreach EXCLUDE.txt")
-        out += [f"career-ops tracker #{r['num']} {r['date']} {r['role']} · {r['status']} · {r['score']}"
-                for r in self.rows if norm(r["company"]) == n]
-        out += [f"career-ops pending addition #{a.get('num')} {a.get('role')} · {a.get('status')}"
-                for a in self.adds if norm(a.get("company")) == n]
-        return out
+        return list(self.reasons.get(norm(company), []))
+
+
+def cmd_taken(ws, dr, argv):
+    """Write every taken key (normalized name / domain root) with its reason, for research agents to grep."""
+    out = pop(argv, "--out")
+    pipe = Pipeline(ws, dr)
+    lines = [f"{k}\t{v[0]}" + (f" (+{len(v) - 1} more)" if len(v) > 1 else "") for k, v in sorted(pipe.reasons.items())]
+    if out:
+        Path(out).write_text("# jh.py taken: normalized company/domain key<TAB>why. Check with: jh check <name>\n"
+                             + "\n".join(lines) + "\n")
+        print(f"{len(lines)} taken companies/domains -> {out}")
+    else:
+        print("\n".join(lines))
+    return 0
 
 
 def cmd_check(ws, dr, companies):
     if not companies:
         sys.exit("usage: jh.py check <company> [<company> ...]")
-    pipe, claims = Pipeline(ws, dr), open_claims()
+    pipe, claims = Pipeline(ws, dr), open_claims(ws)
     hit_any = False
     for c in companies:
         hits = pipe.hits(c)
@@ -243,20 +336,48 @@ def cmd_check(ws, dr, companies):
     return 1 if hit_any else 0
 
 
+# ---------- people: several campaigns on one machine ----------
+
+def workspaces():
+    found = {p.parent for p in Path.home().glob("Documents/cold-email*/profile.toml")}
+    for extra in filter(None, os.environ.get("JH_WORKSPACES", "").split(":")):
+        if (Path(os.path.expanduser(extra)) / "profile.toml").exists():
+            found.add(Path(os.path.expanduser(extra)))
+    return sorted(found)
+
+
+def cmd_people():
+    from common import followups_due
+    today = date.today().isoformat()
+    print(f"{'person':18} {'sender':32} {'workspace':30} {'career-ops data':26} {'chrome':10} today  FU due")
+    for w in workspaces():
+        prof, conf = load_prof(w), jh_conf(w)
+        rows = send_log(w)
+        try:
+            due = sum(len(followups_due(rows, prof, st, today)[0]) for st in ("fu1", "fu2"))
+        except Exception:
+            due = "?"
+        print(f"{prof.get('identity', {}).get('name', '?'):18} {prof.get('sending', {}).get('gmail_address', '?'):32} "
+              f"{str(w).replace(str(Path.home()), '~'):30} {conf.get('career_ops_data_root', '(default)'):26} "
+              f"{conf.get('chrome_device', '?'):10} {sum(r.get('date_sent') == today for r in rows):>5}  {due:>6}")
+    return 0
+
+
 # ---------- claims: both tracks in parallel, never the same company ----------
 
 CLAIM_TTL_DAYS = 3
 
 
-def claims_dir():
-    d = Path(os.path.expanduser(os.environ.get("JH_CLAIMS", "~/.cache/job-hunt/claims")))
+def claims_dir(ws):
+    """Per person: claims live in that person's workspace, so two campaigns never block each other."""
+    d = Path(os.path.expanduser(os.environ["JH_CLAIMS"])) if os.environ.get("JH_CLAIMS") else ws / ".cache" / "claims"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def open_claims():
+def open_claims(ws):
     out, now = {}, time.time()
-    for f in claims_dir().glob("*.json"):
+    for f in claims_dir(ws).glob("*.json"):
         try:
             c = json.loads(f.read_text())
         except Exception:
@@ -273,7 +394,7 @@ def cmd_claim(ws, dr, argv):
     by = pop(argv, "--by") or ""
     if track not in ("A", "B") or not argv:
         sys.exit("usage: jh.py claim <company> [<company> ...] --track A|B [--by <worker>]")
-    pipe, claims = Pipeline(ws, dr), open_claims()
+    pipe, claims = Pipeline(ws, dr), open_claims(ws)
     lost = 0
     for c in argv:
         n = norm(c)
@@ -282,12 +403,12 @@ def cmd_claim(ws, dr, argv):
             print(f"TAKEN {c}: {hits[0]}")
             lost += 1
             continue
-        f = claims_dir() / f"{n}.json"
+        f = claims_dir(ws) / f"{n}.json"
         rec = {"company": c, "track": track, "by": by, "at": time.strftime("%Y-%m-%d %H:%M"), "ts": time.time()}
+        tmp = f.with_name(f".{n}.{os.getpid()}.{time.time_ns()}.tmp")
+        tmp.write_text(json.dumps(rec))
         try:
-            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)  # atomic across parallel workers
-            with os.fdopen(fd, "w") as fh:
-                json.dump(rec, fh)
+            os.link(tmp, f)  # atomic create-if-absent, and the file is complete the moment it exists
             print(f"OK    {c}  (Track {track})")
         except FileExistsError:
             other = claims.get(n) or json.loads(f.read_text())
@@ -296,15 +417,17 @@ def cmd_claim(ws, dr, argv):
             else:
                 print(f"TAKEN {c}: claimed by Track {other.get('track')} ({other.get('by') or '?'}) at {other.get('at')}")
                 lost += 1
+        finally:
+            tmp.unlink(missing_ok=True)
     return 1 if lost else 0
 
 
-def cmd_release(argv):
+def cmd_release(ws, argv):
     if not argv:
         sys.exit("usage: jh.py release <company> [<company> ...] | --all-track A|B")
     track = (pop(argv, "--all-track") or "").upper()
     n = 0
-    for f in claims_dir().glob("*.json"):
+    for f in claims_dir(ws).glob("*.json"):
         c = json.loads(f.read_text())
         if (track and c.get("track") == track) or norm(c.get("company")) in {norm(x) for x in argv}:
             f.unlink()
@@ -313,8 +436,8 @@ def cmd_release(argv):
     return 0
 
 
-def cmd_claims():
-    cl = open_claims()
+def cmd_claims(ws):
+    cl = open_claims(ws)
     if not cl:
         print("no open claims")
     for c in sorted(cl.values(), key=lambda x: x["ts"]):
@@ -596,6 +719,23 @@ def cmd_verify():
             rows = tracker_rows(tdr)
             step("career-ops merge-tracker takes the bridge's rows", rc5 == 0 and len(rows) == 2
                  and any(norm(r["company"]) == "acme" for r in rows), " | ".join(lines[-3:]))
+        # dedupe sources beyond SEND-LOG: prior research, extra lists, another person's campaign
+        (tws / "rounds/r1").mkdir(parents=True)
+        (tws / "rounds/r1/_research_A.tsv").write_text("oldco\tOld Co\tVC\tGREEN\t-\t-\tFAIL G3 pay 4 LPA\n")
+        (tws / "own.txt").write_text("# own campaign\nSelfmail, Another One\n")
+        ows = Path(tmp) / "other"
+        ows.mkdir()
+        (ows / "SEND-LOG.csv").write_text("date_sent,company,person,email,subject,followup1_due,followup2_due,reply,outcome\n"
+                                          "2026-11-02,theirco,T,t@theirco.com,hi,,,,\n")
+        (tws / "profile.toml").write_text(f'[targets]\nnever_contact = ["nogo"]\n[job_hunt]\n'
+                                          f'also_skip_workspaces = ["{ows}"]\nextra_taken_files = ["own.txt"]\n')
+        rc9, o9 = run(base + ["check", "Old Co", "Another One", "TheirCo", "Nogo", "Freshco"], env=env)
+        rc10, o10 = run(base + ["taken", "--out", str(Path(tmp) / "taken.tsv")], env=env)
+        tk = (Path(tmp) / "taken.tsv").read_text() if (Path(tmp) / "taken.tsv").exists() else ""
+        step("taken: prior research, extra lists, other campaigns, never_contact; taken file written",
+             rc9 == 1 and all(f"HIT  {x}" in o9 for x in ("Old Co", "Another One", "TheirCo", "Nogo"))
+             and "NEW  Freshco" in o9 and "researched in round r1" in o9 and rc10 == 0 and "theirco\t" in tk,
+             f"{o9} | {o10}")
         # race: 4 Track A + 4 Track B workers claim one company at the same instant
         procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -626,8 +766,9 @@ def main():
         return subprocess.run([sys.executable, str(SKILL / "tools/build_core.py")]).returncode
     table = {"where": lambda: cmd_where(ws, dr), "status": lambda: cmd_status(ws, dr),
              "check": lambda: cmd_check(ws, dr, rest), "push-sends": lambda: cmd_push(ws, dr, dry, no_merge),
-             "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(rest), "claims": cmd_claims,
-             "verify": cmd_verify, "cost": cmd_cost}
+             "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(ws, rest), "claims": lambda: cmd_claims(ws),
+             "verify": cmd_verify, "cost": cmd_cost, "people": cmd_people,
+             "taken": lambda: cmd_taken(ws, dr, rest)}
     if cmd not in table:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")
     return table[cmd]()
