@@ -18,4 +18,7 @@ for keep in .career-ops-data node_modules; do
 done
 rm -rf "$DEST"
 mv "$TMP/out" "$DEST"
-echo "career-ops synced to $VER ($SHA). Update UPSTREAM.md, run 'npm ci' in $DEST if package-lock.json changed, then commit."
+python3 "$SKILL/tools/build_core.py"
+echo "career-ops synced to $VER ($SHA)."
+echo "Next: check any WARN lines above (a renamed upstream heading needs a rule in tools/build_core.py),"
+echo "update UPSTREAM.md, run 'npm ci' in $DEST if package-lock.json changed, then: python3 $SKILL/jh.py verify"
