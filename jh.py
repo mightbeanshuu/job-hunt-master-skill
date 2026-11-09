@@ -13,6 +13,8 @@
   people                    every campaign on this machine: sender, workspace, data root, Chrome device, FU due
   taken [--out FILE]        everything already taken for this person (sends, excludes, prior research,
                             other campaigns, tracker) as one greppable file for research agents
+  entry-level [portals.yml] [--also "X"]  let a career-ops scan find intern / junior / new-grad titles
+                            (its template rejects them and onboarding never removes them)
   where                     resolved paths
   build                     regenerate core/ after editing or syncing career-ops
   verify                    syntax + freshness + smoke tests; run before every commit
@@ -334,6 +336,44 @@ def cmd_check(ws, dr, companies):
         for h in hits:
             print(f"      {h}")
     return 1 if hit_any else 0
+
+
+# ---------- career-ops onboarding fixes ----------
+
+ENTRY_LEVEL_NEGATIVES = {"junior", "word:intern", "word:interns", "internship", "intern", "graduate", "trainee",
+                         "entry level", "entry-level", "new grad", "fresher"}
+
+
+def cmd_entry_level(ws, dr, argv):
+    """career-ops' portal template rejects Junior/Intern/Internship titles and its onboarding writer never removes
+    template negatives, so an intern or new-grad seeker's scan would find nothing. Drop those entries (plus any
+    --also "X") from title_filter.negative only. Idempotent."""
+    extra = set()
+    while "--also" in argv:
+        extra.add(pop(argv, "--also").lower())
+    f = Path(argv[0]) if argv else dr / "portals.yml"
+    if not f.exists():
+        sys.exit(f"no {f}")
+    lines, out, removed = f.read_text().splitlines(keepends=True), [], []
+    in_tf = in_neg = False
+    for line in lines:
+        if re.match(r"^title_filter:", line):
+            in_tf = True
+        elif re.match(r"^\S", line) and not line.startswith("#"):
+            in_tf = in_neg = False
+        if in_tf and re.match(r"^  negative:", line):
+            in_neg = True
+        elif in_tf and re.match(r"^  \S", line) and not re.match(r"^  negative:", line):
+            in_neg = False
+        m = re.match(r'^\s+-\s+["\']?(.*?)["\']?\s*$', line) if in_neg else None
+        if m and (m.group(1).lower() in ENTRY_LEVEL_NEGATIVES or m.group(1).lower() in extra):
+            removed.append(m.group(1))
+            continue
+        out.append(line)
+    if removed:
+        f.write_text("".join(out))
+    print(f"{f}: removed {removed if removed else 'nothing (already entry-level)'} from title_filter.negative")
+    return 0
 
 
 # ---------- people: several campaigns on one machine ----------
@@ -681,7 +721,7 @@ def cmd_verify():
     refs = set(re.findall(r"`([\w./-]+?\.(?:md|py|sh|mjs|toml|csv))`", t))
     search = [SKILL, CA, CA / "references", CA / "scripts", CO, CO / "modes", SKILL / "core", SKILL / "scripts"]
     missing = [r for r in refs if "<" not in r and not any((d / r).exists() for d in search)
-               and not r.startswith("DATA_ROOT/") and r not in USER_LAYER]
+               and not r.startswith("DATA_ROOT/") and Path(r).name not in USER_LAYER]
     step(f"files named in SKILL.md exist ({len(refs)})", not missing, ", ".join(missing))
     rc, out = run([sys.executable, str(SKILL / "tools/build_core.py"), "--check"])
     step("core/ fresh and no unknown upstream headings", rc == 0 and "WARN" not in out, out)
@@ -736,6 +776,17 @@ def cmd_verify():
              rc9 == 1 and all(f"HIT  {x}" in o9 for x in ("Old Co", "Another One", "TheirCo", "Nogo"))
              and "NEW  Freshco" in o9 and "researched in round r1" in o9 and rc10 == 0 and "theirco\t" in tk,
              f"{o9} | {o10}")
+        # entry-level: drop only the intern/junior rejects inside title_filter.negative, idempotently
+        pf = Path(tmp) / "portals.yml"
+        pf.write_text('title_filter:\n  positive:\n    - "Intern"\n  negative:\n    - "Junior"\n    # note\n'
+                      '    - "word:Intern"\n    - "Internship"\n    - "PHP"\n    - "Java "\n  seniority_boost:\n'
+                      '    - "Senior"\nother:\n  negative:\n    - "Junior"\n')
+        rc11, o11 = run(base + ["entry-level", str(pf), "--also", "Java "], env=env)
+        rc12, o12 = run(base + ["entry-level", str(pf)], env=env)
+        y = pf.read_text()
+        step("entry-level: intern/junior rejects dropped from title_filter only; idempotent",
+             rc11 == 0 and "'Junior', 'word:Intern', 'Internship', 'Java '" in o11 and "nothing" in o12
+             and '"PHP"' in y and '- "Intern"' in y and y.count('"Junior"') == 1 and "seniority_boost" in y, f"{o11} | {o12} | {y}")
         # race: 4 Track A + 4 Track B workers claim one company at the same instant
         procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -768,7 +819,7 @@ def main():
              "check": lambda: cmd_check(ws, dr, rest), "push-sends": lambda: cmd_push(ws, dr, dry, no_merge),
              "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(ws, rest), "claims": lambda: cmd_claims(ws),
              "verify": cmd_verify, "cost": cmd_cost, "people": cmd_people,
-             "taken": lambda: cmd_taken(ws, dr, rest)}
+             "taken": lambda: cmd_taken(ws, dr, rest), "entry-level": lambda: cmd_entry_level(ws, dr, rest)}
     if cmd not in table:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")
     return table[cmd]()
