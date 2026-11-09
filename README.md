@@ -23,6 +23,7 @@ A Claude Code skill that merges two job-search pipelines behind one router, tune
   | scan (main thread) | 33.7k | 15.8k (−53%) |
 
 - **Cheaper models where it's safe.** career-ops' `spend_tier` maps to the subagent model (haiku / sonnet / opus). Track A research agents run on Sonnet, while the main thread keeps the review and 8/8 pitch gate. At most 2 agents run at once.
+- **Both tracks in parallel.** One subagent per track, and the main thread keeps the browser work. `jh.py claim <company> --track A|B` is an atomic lock, so the two never take the same company.
 - **No double contact.** `jh.py check A B C` checks a whole list at once against SEND-LOG, EXCLUDE and the career-ops tracker. `push-sends` copies cold emails into the tracker, numbered by career-ops' own allocator when its deps are installed.
 - **Never ships broken.** `jh.py verify` compiles every script, checks JSON and the SKILL.md frontmatter, confirms every file SKILL.md names exists and `core/` is fresh, and smoke-tests the bridge on throwaway data.
 
@@ -38,9 +39,9 @@ cp ~/.claude/skills/job-hunt/cold-outreach/assets/FOLLOWUP-LOG.header.csv ~/Docu
 touch ~/Documents/cold-email/EXCLUDE.txt
 
 # Track B: deps (Node ^22.13 or >=23.4) and a data folder outside the skill
-cd ~/.claude/skills/job-hunt/career-ops && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
-npx playwright install chromium          # only for PDF rendering
+cd ~/.claude/skills/job-hunt/career-ops && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install   # upstream ships no lockfile
 mkdir -p ~/career-ops-data && echo "$HOME/career-ops-data" > .career-ops-data
+echo CAREER_OPS_BROWSER_AUTODETECT=true >> ~/career-ops-data/.env   # PDFs use your installed Chrome/Brave
 
 python3 ~/.claude/skills/job-hunt/jh.py verify
 ```
@@ -63,7 +64,7 @@ Prompts for Track A are in `cold-outreach/PROMPTS.md`. Track B modes are listed 
 
 ```
 SKILL.md                    router, fast paths, combined flows, shared rules
-jh.py                       status | check | push-sends | where | build | verify | cost
+jh.py                       status | check | claim/release/claims | push-sends | where | build | verify | cost
 core/                       generated exact extracts of career-ops' router + AGENTS.md
 tools/build_core.py         builds core/ (rules for core / on-demand / left out)
 scripts/sync-career-ops.sh  refresh the vendored career-ops, then rebuild core/

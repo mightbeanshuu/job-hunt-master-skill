@@ -4,8 +4,12 @@
   status                    one-screen dashboard for both tracks (run this first in a session)
   check <company> ...       already cold-mailed (SEND-LOG / EXCLUDE) or in the career-ops tracker?
                             exit 1 if any company has a hit, so it can gate a step
-  push-sends [--dry-run]    cold emails from SEND-LOG -> career-ops tracker-addition TSVs
-                            (then: node merge-tracker.mjs, printed for you)
+  claim <co> ... --track A|B [--by w]   atomic claim before working a company, so both tracks
+                            can run in parallel and never take the same one; exit 1 = taken
+  release <co> ... | --all-track A|B     drop claims (company failed a gate / run ended)
+  claims                    list open claims (auto-expire after 3 days)
+  push-sends [--dry-run] [--no-merge]    cold emails from SEND-LOG -> career-ops tracker,
+                            then merge-tracker (one call when career-ops deps are installed)
   where                     resolved paths
   build                     regenerate core/ after editing or syncing career-ops
   verify                    syntax + freshness + smoke tests; run before every commit
@@ -15,7 +19,7 @@ Options: --workspace <dir>  cold-outreach workspace ($OUTREACH_WS, else ~/Docume
          --data-root <dir>  career-ops DATA_ROOT ($CAREER_OPS_ROOT / $CAREER_OPS_DATA_DIR,
                             else career-ops/.career-ops-data, else ~/career-ops-data)
 """
-import csv, json, os, re, shutil, subprocess, sys, tempfile
+import csv, json, os, re, shutil, subprocess, sys, tempfile, time
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -33,8 +37,11 @@ LEGAL = re.compile(r"\b(inc|llc|ltd|limited|pvt|private|corp|corporation|co|gmbh
 
 # ---------- paths ----------
 
+CONTACT_SUFFIX = re.compile(r"[-_ ](\d{1,2}|ceo|cto|coo|cfo|cpo|founder|cofounder|co-founder|hr)$")
+
+
 def norm(name):
-    s = (name or "").lower()
+    s = CONTACT_SUFFIX.sub("", (name or "").lower().strip())  # SEND-LOG slugs: hevo-2, hevo-ceo = hevo
     s = re.sub(r"\.(com|io|ai|in|co|dev|app|so|xyz)\b", "", s)
     s = LEGAL.sub(" ", s)
     return re.sub(r"[^a-z0-9]", "", s)
@@ -120,17 +127,17 @@ def pushed_state(ws):
 
 
 def unpushed(ws, dr):
+    """One entry per company not yet in the tracker: all its delivered contacts, earliest send first."""
     _, pushed = pushed_state(ws)
     known = {norm(r["company"]) for r in tracker_rows(dr)} | {norm(a.get("company")) for a in pending_additions(dr)}
-    out, seen = [], set()
+    groups = {}
     for s in send_log(ws):
         email = (s.get("email") or "").lower()
         n = norm(s.get("company"))
-        if not email or email in pushed or bounced(s) or n in known or n in seen:
+        if not email or email in pushed or bounced(s) or n in known:
             continue
-        seen.add(n)
-        out.append(s)
-    return out
+        groups.setdefault(n, []).append(s)
+    return list(groups.values())
 
 
 # ---------- commands ----------
@@ -166,7 +173,7 @@ def cmd_status(ws, dr):
     marker = (CO / ".career-ops-data").exists()
     have = [n for n in ("cv.md", "config/profile.yml", "modes/_profile.md", "portals.yml") if (dr / n).exists()]
     missing = [n for n in ("cv.md", "config/profile.yml", "modes/_profile.md", "portals.yml") if n not in have]
-    print(f"B career-ops {ver}  deps {'ok' if deps else 'MISSING → ! cd ' + str(CO) + ' && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci'}")
+    print(f"B career-ops {ver}  deps {'ok' if deps else 'MISSING → ! cd ' + str(CO) + ' && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install'}")
     print(f"  data {dr}{'' if marker else '  (marker not set: write it on first Track B use)'}")
     if missing:
         print(f"  setup missing: {', '.join(missing)}  → onboarding (core/career-ops-rules.md on-demand table)")
@@ -178,6 +185,10 @@ def cmd_status(ws, dr):
     if adds:
         print(f"  {len(adds)} tracker additions waiting → cd {CO} && CAREER_OPS_ROOT={dr} node merge-tracker.mjs")
     # Bridge + health
+    cl = open_claims()
+    if cl:
+        c = Counter(x["track"] for x in cl.values())
+        print("claims  " + " · ".join(f"Track {k} {v}" for k, v in sorted(c.items())) + "  (jh.py claims)")
     if (ws / "SEND-LOG.csv").exists():
         n = len(unpushed(ws, dr))
         if n:
@@ -188,36 +199,130 @@ def cmd_status(ws, dr):
     return 0
 
 
+class Pipeline:
+    """Everything that says a company is already taken: SEND-LOG, EXCLUDE, tracker, pending additions."""
+
+    def __init__(self, ws, dr):
+        self.sends = send_log(ws)
+        ef = ws / "EXCLUDE.txt"
+        self.excl = ({norm(x) for x in ef.read_text().splitlines() if x.strip() and not x.startswith("#")}
+                     if ef.exists() else set())
+        self.rows, self.adds = tracker_rows(dr), pending_additions(dr)
+
+    def hits(self, company):
+        n = norm(company)
+        out = []
+        for s in self.sends:
+            if norm(s.get("company")) == n:
+                out.append(f"cold-mailed {s.get('date_sent')} → {s.get('email')}"
+                           + (f" · reply: {s['reply']}" if s.get("reply") else "")
+                           + (f" · {s['outcome']}" if s.get("outcome") else ""))
+        if n in self.excl:
+            out.append("in cold-outreach EXCLUDE.txt")
+        out += [f"career-ops tracker #{r['num']} {r['date']} {r['role']} · {r['status']} · {r['score']}"
+                for r in self.rows if norm(r["company"]) == n]
+        out += [f"career-ops pending addition #{a.get('num')} {a.get('role')} · {a.get('status')}"
+                for a in self.adds if norm(a.get("company")) == n]
+        return out
+
+
 def cmd_check(ws, dr, companies):
     if not companies:
         sys.exit("usage: jh.py check <company> [<company> ...]")
-    sends = send_log(ws)
-    excl = set()
-    ef = ws / "EXCLUDE.txt"
-    if ef.exists():
-        excl = {norm(x) for x in ef.read_text().splitlines() if x.strip() and not x.startswith("#")}
-    rows, adds = tracker_rows(dr), pending_additions(dr)
+    pipe, claims = Pipeline(ws, dr), open_claims()
     hit_any = False
     for c in companies:
-        n = norm(c)
-        hits = []
-        for s in sends:
-            if norm(s.get("company")) == n:
-                hits.append(f"cold-mailed {s.get('date_sent')} → {s.get('email')}"
-                            + (f" · reply: {s['reply']}" if s.get("reply") else "")
-                            + (f" · {s['outcome']}" if s.get("outcome") else ""))
-        if n in excl:
-            hits.append("in cold-outreach EXCLUDE.txt")
-        hits += [f"career-ops tracker #{r['num']} {r['date']} {r['role']} · {r['status']} · {r['score']}"
-                 for r in rows if norm(r["company"]) == n]
-        hits += [f"career-ops pending addition #{a.get('num')} {a.get('role')} · {a.get('status')}"
-                 for a in adds if norm(a.get("company")) == n]
+        hits = pipe.hits(c)
+        cl = claims.get(norm(c))
+        if cl:
+            hits.append(f"claimed by Track {cl['track']} ({cl.get('by') or '?'}) at {cl['at']}")
         hit_any |= bool(hits)
         print(f"{'HIT ' if hits else 'NEW '} {c}")
         for h in hits:
             print(f"      {h}")
     return 1 if hit_any else 0
 
+
+# ---------- claims: both tracks in parallel, never the same company ----------
+
+CLAIM_TTL_DAYS = 3
+
+
+def claims_dir():
+    d = Path(os.path.expanduser(os.environ.get("JH_CLAIMS", "~/.cache/job-hunt/claims")))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def open_claims():
+    out, now = {}, time.time()
+    for f in claims_dir().glob("*.json"):
+        try:
+            c = json.loads(f.read_text())
+        except Exception:
+            continue
+        if now - c.get("ts", 0) > CLAIM_TTL_DAYS * 86400:
+            f.unlink(missing_ok=True)  # stale: the worker that took it is long gone
+            continue
+        out[f.stem] = c
+    return out
+
+
+def cmd_claim(ws, dr, argv):
+    track = (pop(argv, "--track") or "").upper()
+    by = pop(argv, "--by") or ""
+    if track not in ("A", "B") or not argv:
+        sys.exit("usage: jh.py claim <company> [<company> ...] --track A|B [--by <worker>]")
+    pipe, claims = Pipeline(ws, dr), open_claims()
+    lost = 0
+    for c in argv:
+        n = norm(c)
+        hits = pipe.hits(c)
+        if hits:
+            print(f"TAKEN {c}: {hits[0]}")
+            lost += 1
+            continue
+        f = claims_dir() / f"{n}.json"
+        rec = {"company": c, "track": track, "by": by, "at": time.strftime("%Y-%m-%d %H:%M"), "ts": time.time()}
+        try:
+            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)  # atomic across parallel workers
+            with os.fdopen(fd, "w") as fh:
+                json.dump(rec, fh)
+            print(f"OK    {c}  (Track {track})")
+        except FileExistsError:
+            other = claims.get(n) or json.loads(f.read_text())
+            if other.get("track") == track:
+                print(f"OK    {c}  (already Track {track})")
+            else:
+                print(f"TAKEN {c}: claimed by Track {other.get('track')} ({other.get('by') or '?'}) at {other.get('at')}")
+                lost += 1
+    return 1 if lost else 0
+
+
+def cmd_release(argv):
+    if not argv:
+        sys.exit("usage: jh.py release <company> [<company> ...] | --all-track A|B")
+    track = (pop(argv, "--all-track") or "").upper()
+    n = 0
+    for f in claims_dir().glob("*.json"):
+        c = json.loads(f.read_text())
+        if (track and c.get("track") == track) or norm(c.get("company")) in {norm(x) for x in argv}:
+            f.unlink()
+            n += 1
+    print(f"released {n} claim(s)")
+    return 0
+
+
+def cmd_claims():
+    cl = open_claims()
+    if not cl:
+        print("no open claims")
+    for c in sorted(cl.values(), key=lambda x: x["ts"]):
+        print(f"  Track {c['track']}  {c['company']:30} {c.get('by') or '':12} {c['at']}")
+    return 0
+
+
+# ---------- push cold sends into the career-ops tracker ----------
 
 def role_index(ws):
     idx = {}
@@ -231,59 +336,150 @@ def role_index(ws):
     return idx
 
 
+ROLE_WORDS = re.compile(r"\b(engineer|sde|swe|developer|dev|intern|backend|frontend|full[- ]?stack|ml|ai|data|"
+                        r"software|platform|infra|devops|sre|analyst|founding|associate)\b", re.I)
+
+
+def role_for(s, roles):
+    """Round folder's ROLE header, else the subject's first segment when it names a role."""
+    email = (s.get("email") or "").lower()
+    if email in roles:
+        return roles[email]
+    subj = re.sub(r"^\s*(re|fwd?):\s*", "", s.get("subject") or "", flags=re.I)
+    subj = re.sub(r"^\s*application\s+(for|to)\s+(the\s+)?", "", subj, flags=re.I)
+    head = re.split(r",| - | — | \| | \(", subj)[0].strip()
+    return head[:60] if head and ROLE_WORDS.search(head) else "Cold outreach"
+
+
+def sent_date(s, fu1_days):
+    """date_sent, else FU1 due minus the profile's fu1_after_days, else today."""
+    if (s.get("date_sent") or "").strip():
+        return s["date_sent"].strip()
+    try:
+        from datetime import timedelta
+        return (date.fromisoformat(s.get("followup1_due", "").strip()) - timedelta(days=fu1_days)).isoformat()
+    except ValueError:
+        return date.today().isoformat()
+
+
+def fu1_days(ws):
+    try:
+        import tomllib
+        return int(tomllib.loads((ws / "profile.toml").read_text()).get("followup", {}).get("fu1_after_days", 4))
+    except Exception:
+        return 4
+
+
+def node_ok():
+    return (CO / "node_modules").exists() and shutil.which("node")
+
+
+def co_env(dr):
+    return {**os.environ, "CAREER_OPS_ROOT": str(dr)}
+
+
 def reserve_numbers(dr, n):
-    """career-ops' own allocator when its deps are installed; else max+1 over everything numbered."""
-    if n and (CO / "node_modules").exists() and shutil.which("node"):
-        r = subprocess.run(["node", "reserve-report-num.mjs", "--count", str(n)], cwd=CO, capture_output=True,
-                           text=True, env={**os.environ, "CAREER_OPS_ROOT": str(dr)}, timeout=60)
-        m = re.search(r"(\d+)(?:-(\d+))?\s*$", r.stdout.strip())
-        if r.returncode == 0 and m:
-            a = int(m.group(1))
-            return list(range(a, a + n)), "career-ops allocator"
-    nums = [r["num"] for r in tracker_rows(dr)]
-    nums += [int(a["num"]) for a in pending_additions(dr) if str(a.get("num", "")).isdigit()]
+    """career-ops' allocator (max 50 per call, so in blocks); else max+1 over everything numbered.
+    Returns (numbers, ranges to release later, how)."""
+    if n and node_ok():
+        nums, ranges = [], []
+        while len(nums) < n:
+            k = min(50, n - len(nums))
+            r = subprocess.run(["node", "reserve-report-num.mjs", "--count", str(k)], cwd=CO, capture_output=True,
+                               text=True, env=co_env(dr), timeout=60)
+            m = re.fullmatch(r"(\d+)(?:-(\d+))?", r.stdout.strip())
+            if r.returncode or not m:
+                for rg in ranges:
+                    subprocess.run(["node", "reserve-report-num.mjs", "--release", rg], cwd=CO,
+                                   capture_output=True, env=co_env(dr), timeout=60)
+                nums = None
+                break
+            a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+            nums += list(range(a, b + 1))
+            ranges.append(r.stdout.strip())
+        if nums:
+            return nums[:n], ranges, "career-ops allocator"
+    taken = [r["num"] for r in tracker_rows(dr)]
+    taken += [int(a["num"]) for a in pending_additions(dr) if str(a.get("num", "")).isdigit()]
     rep = dr / "reports"
-    nums += [int(m.group(1)) for f in (rep.glob("*.md") if rep.exists() else []) if (m := re.match(r"(\d+)-", f.name))]
-    start = max(nums, default=0) + 1
-    return list(range(start, start + n)), "max+1 fallback (merge-tracker renumbers collisions)"
+    taken += [int(m.group(1)) for f in (rep.glob("*.md") if rep.exists() else []) if (m := re.match(r"(\d+)-", f.name))]
+    start = max(taken, default=0) + 1
+    return list(range(start, start + n)), [], "max+1 fallback (merge-tracker renumbers collisions)"
 
 
-def cmd_push(ws, dr, dry):
-    todo = unpushed(ws, dr)
+TRACKER_TEMPLATE = ("# Applications Tracker\n\n| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n"
+                    "|---|------|---------|------|-------|--------|-----|--------|-------|\n")
+
+
+def merge(dr):
+    """Run career-ops' merge-tracker (creates the tracker from upstream's template if missing)."""
+    tf = dr / "data" / "applications.md"
+    if not tracker_file(dr).exists():
+        tf.parent.mkdir(parents=True, exist_ok=True)
+        tf.write_text(TRACKER_TEMPLATE)
+    head = next((l for l in tracker_file(dr).read_text().splitlines() if l.startswith("| #")), "")
+    if "Via" not in head:  # upstream's own migration, so `via = cold-email` survives the merge
+        subprocess.run(["node", "merge-tracker.mjs", "--migrate-via"], cwd=CO, capture_output=True, text=True,
+                       env=co_env(dr), timeout=120)
+    r = subprocess.run(["node", "merge-tracker.mjs"], cwd=CO, capture_output=True, text=True, env=co_env(dr),
+                       timeout=600)
+    lines = [l for l in (r.stdout + r.stderr).splitlines() if l.strip()]
+    return r.returncode, lines
+
+
+def cmd_push(ws, dr, dry, no_merge):
+    groups = unpushed(ws, dr)
     state_f, pushed = pushed_state(ws)
-    if not todo:
+    if not groups:
         print("nothing to push: every cold-mailed company is already in the tracker.")
         return 0
-    nums, how = reserve_numbers(dr, 0 if dry else len(todo))
+    roles, fud = role_index(ws), fu1_days(ws)
+
+    def row(g):
+        g = sorted(g, key=lambda s: sent_date(s, fud))
+        first = g[0]
+        company = CONTACT_SUFFIX.sub("", (first.get("company") or "").strip())
+        status = "Responded" if any((s.get("reply") or "").strip() for s in g) else "Applied"
+        who = "; ".join(f"{s.get('person') or '?'} <{(s.get('email') or '').lower()}>" for s in g[:3])
+        more = f" +{len(g) - 3} more" if len(g) > 3 else ""
+        notes = f"cold email to {who}{more}; FU1 {first.get('followup1_due') or '-'}"
+        return sent_date(first, fud), company, role_for(first, roles), status, notes
+
+    for g in groups[:5]:
+        d, co, role, st, _ = row(g)
+        print(f"  {'would add' if dry else 'add'}  {co} · {role} · {d}" + (f" · {len(g)} contacts" if len(g) > 1 else ""))
+    if len(groups) > 5:
+        print(f"  … and {len(groups) - 5} more")
     if dry:
-        nums = list(range(1, len(todo) + 1))
-    roles = role_index(ws)
-    out_dir = dr / "batch" / "tracker-additions"
-    header = ["num", "date", "company", "role", "status", "score", "pdf", "report", "notes", "via"]
-    for num, s in zip(nums, todo):
-        email = (s.get("email") or "").lower()
-        status = "Responded" if (s.get("reply") or "").strip() else "Applied"
-        notes = f"cold email to {s.get('person') or '?'} <{email}>; FU1 {s.get('followup1_due') or '-'}"
-        vals = [str(num), s.get("date_sent") or date.today().isoformat(), (s.get("company") or "").replace("\t", " "),
-                roles.get(email, "Cold outreach").replace("\t", " "), status, "N/A", "❌", "—",
-                notes.replace("\t", " "), "cold-email"]
-        slug = re.sub(r"[^a-z0-9]+", "-", (s.get("company") or "co").lower()).strip("-") or "co"
-        if not dry:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / f"{num:03d}-{slug}.tsv").write_text("\t".join(header) + "\n" + "\t".join(vals) + "\n")
-            pushed.add(email)
-    shown = todo[:5]
-    for s in shown:
-        print(f"  {'would add' if dry else 'added'}  {s.get('company')} · {roles.get((s.get('email') or '').lower(), 'Cold outreach')}")
-    if len(todo) > len(shown):
-        print(f"  … and {len(todo) - len(shown)} more")
-    if dry:
-        print(f"{len(todo)} would be added (dry run).")
+        print(f"{len(groups)} companies would be added (dry run).")
         return 0
+    nums, ranges, how = reserve_numbers(dr, len(groups))
+    out_dir = dr / "batch" / "tracker-additions"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    header = ["num", "date", "company", "role", "status", "score", "pdf", "report", "notes", "via"]
+    for num, g in zip(nums, groups):
+        d, co, role, st, notes = row(g)
+        clean = lambda x: x.replace("\t", " ").replace("|", "/")
+        vals = [str(num), d, clean(co), clean(role), st, "N/A", "❌", "—", clean(notes), "cold-email"]
+        slug = re.sub(r"[^a-z0-9]+", "-", co.lower()).strip("-") or "co"
+        (out_dir / f"{num:03d}-{slug}.tsv").write_text("\t".join(header) + "\n" + "\t".join(vals) + "\n")
+        pushed.update((s.get("email") or "").lower() for s in g)
     state_f.parent.mkdir(parents=True, exist_ok=True)
     state_f.write_text(json.dumps(sorted(pushed), indent=0))
-    print(f"{len(todo)} added, numbered by {how}.")
-    print(f"next: cd {CO} && CAREER_OPS_ROOT={dr} node merge-tracker.mjs")
+    print(f"{len(groups)} companies written as tracker additions, numbered by {how}.")
+    if no_merge or not node_ok():
+        print(f"merge: cd {CO} && CAREER_OPS_ROOT={dr} node merge-tracker.mjs")
+        return 0
+    rc, lines = merge(dr)
+    for l in [l for l in lines if "Summary" in l or "Moved" in l][-3:]:
+        print("  " + l)
+    if rc:
+        print(f"merge-tracker exited {rc}: additions kept in {out_dir}; reservations expire on their own (4h)")
+        return 1
+    for rg in ranges:  # numbers now live in tracker rows, which the allocator already treats as taken
+        subprocess.run(["node", "reserve-report-num.mjs", "--release", rg], cwd=CO, capture_output=True,
+                       env=co_env(dr), timeout=60)
+    print(f"tracker now has {len(tracker_rows(dr))} rows.")
     return 0
 
 
@@ -373,24 +569,46 @@ def cmd_verify():
         (tdr / "data").mkdir(parents=True)
         (tws / "SEND-LOG.csv").write_text(
             "date_sent,company,person,email,subject,followup1_due,followup2_due,reply,outcome\n"
-            "2026-11-01,Acme Labs,Ana,ana@acme.dev,hi,2026-11-04,2026-11-08,,\n"
+            "2026-11-01,Acme Labs,Ana,ana@acme.dev,Application for SDE Intern (6 months),2026-11-04,2026-11-08,,\n"
+            "2026-11-03,acme labs-2,Al,al@acme.dev,hi,2026-11-07,2026-11-11,,\n"
             "2026-11-01,Bolt Pvt Ltd,Bo,bo@bolt.io,hi,2026-11-04,2026-11-08,yes call,\n"
             "2026-11-02,Gone Inc,Gi,gi@gone.ai,hi,,,,BOUNCED 2026-11-02\n")
         (tws / "EXCLUDE.txt").write_text("zeta\n")
         (tdr / "data/applications.md").write_text(
             "| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n|---|---|---|---|---|---|---|---|---|\n"
             "| 7 | 2026-10-30 | Bolt | SDE Intern | 4.1/5 | Applied | ✅ | [7](reports/007-bolt.md) | |\n")
+        env = {**os.environ, "JH_CLAIMS": str(Path(tmp) / "claims")}
         base = [sys.executable, str(SKILL / "jh.py"), "--workspace", str(tws), "--data-root", str(tdr)]
-        rc1, o1 = run(base + ["check", "Acme", "Zeta", "Nobody"])
-        rc2, o2 = run(base + ["push-sends"])
+        rc1, o1 = run(base + ["check", "Acme", "Zeta", "Nobody"], env=env)
+        rc2, o2 = run(base + ["push-sends", "--no-merge"], env=env)
         files = sorted((tdr / "batch/tracker-additions").glob("*.tsv")) if (tdr / "batch/tracker-additions").exists() else []
-        rc3, o3 = run(base + ["push-sends"])
-        rc4, o4 = run(base + ["check", "acme labs"])
-        ok = (rc1 == 1 and "HIT  Acme" in o1 and "HIT  Zeta" in o1 and "NEW  Nobody" in o1 and rc2 == 0
+        rc3, o3 = run(base + ["push-sends"], env=env)
+        rc4, o4 = run(base + ["check", "acme labs"], env=env)
+        tsv = files[0].read_text() if files else ""
+        ok = ("SDE Intern\t" in tsv and "al@acme.dev" in tsv
+              and rc1 == 1 and "HIT  Acme" in o1 and "HIT  Zeta" in o1 and "NEW  Nobody" in o1 and rc2 == 0
               and len(files) == 1 and files[0].name.startswith("008-") and "nothing to push" in o3
               and "pending addition" in o4)
-        step("bridge smoke test (check, push-sends, dedupe, bounce skip, numbering)", ok,
+        step("bridge: check, push-sends, dedupe, bounce skip, numbering", ok,
              f"files={[f.name for f in files]} | {o1} | {o2} | {o3} | {o4}")
+        if node_ok():
+            rc5, lines = merge(tdr)
+            rows = tracker_rows(tdr)
+            step("career-ops merge-tracker takes the bridge's rows", rc5 == 0 and len(rows) == 2
+                 and any(norm(r["company"]) == "acme" for r in rows), " | ".join(lines[-3:]))
+        # race: 4 Track A + 4 Track B workers claim one company at the same instant
+        procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                 for i, tr in enumerate("ABABABAB")]
+        res = [(tr, pr.wait()) for tr, pr in zip("ABABABAB", procs)]
+        winners = {tr for tr, rc in res if rc == 0}
+        losers = {tr for tr, rc in res if rc == 1}
+        rc6, o6 = run(base + ["claim", "Acme", "--track", "A"], env=env)
+        rc7, o7 = run(base + ["release", "Racecorp"], env=env)
+        rc8, o8 = run(base + ["claim", "Racecorp", "--track", "B"], env=env)
+        step("claims: exactly one track wins a race; contacted companies refused; release frees",
+             len(winners) == 1 and losers == ({"A", "B"} - winners) and rc6 == 1 and "TAKEN" in o6
+             and rc7 == 0 and rc8 == 0, f"{res} | {o6} | {o7} | {o8}")
     print("ALL GREEN" if not fails else f"{len(fails)} FAILED")
     return 1 if fails else 0
 
@@ -398,8 +616,8 @@ def cmd_verify():
 def main():
     argv = sys.argv[1:]
     ws, dr = roots(argv)
-    dry = "--dry-run" in argv
-    argv = [a for a in argv if a != "--dry-run"]
+    dry, no_merge = "--dry-run" in argv, "--no-merge" in argv
+    argv = [a for a in argv if a not in ("--dry-run", "--no-merge")]
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
@@ -407,7 +625,8 @@ def main():
     if cmd == "build":
         return subprocess.run([sys.executable, str(SKILL / "tools/build_core.py")]).returncode
     table = {"where": lambda: cmd_where(ws, dr), "status": lambda: cmd_status(ws, dr),
-             "check": lambda: cmd_check(ws, dr, rest), "push-sends": lambda: cmd_push(ws, dr, dry),
+             "check": lambda: cmd_check(ws, dr, rest), "push-sends": lambda: cmd_push(ws, dr, dry, no_merge),
+             "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(rest), "claims": cmd_claims,
              "verify": cmd_verify, "cost": cmd_cost}
     if cmd not in table:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")
