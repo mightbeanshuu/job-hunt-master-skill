@@ -1,0 +1,10 @@
+# user data never lives here, but guard anyway
+profile.toml
+*.local.*
+__pycache__/
+*.pyc
+.DS_Store
+*-workspace/
+.impeccable/
+node_modules/
+career-ops/.career-ops-data

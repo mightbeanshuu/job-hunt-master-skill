@@ -1,0 +1,7 @@
+profile.toml
+*.local.*
+__pycache__/
+*.pyc
+.DS_Store
+*-workspace/
+.impeccable/

@@ -1,0 +1,120 @@
+# Copy to <workspace>/profile.toml and fill in. This file holds personal data: keep it out of git.
+# Every fact here may be quoted in an email, so put in only what is true and checkable.
+
+[identity]
+name = "Your Name"
+first_name = "Your"
+college = "Your College"
+college_short = "College"                # used in subject lines
+degree = "B.Tech CSE"
+grad_year = 2027
+intro = "a final-year Computer Science student at Your College"   # completes "I'm <name>, <intro>"
+phone = "+91-0000000000"
+location = "City, India"
+cgpa = ""                                # only if the user wants it shared when asked
+availability = "I graduate in 2027 and can join as a 6-month intern now or full-time in 2027."
+
+# What the user is eligible for. scripts/eligibility.py checks every JD against this, the grad year above,
+# and the skills their resume (resumes.source_html), eng_facts and GitHub repos show.
+[eligibility]
+# Experience range of roles to target, in years required by the JD. Recommended 0-3: wide enough to include
+# "0-2 / 1-3 yrs" startup roles that do hire strong freshers, narrow enough to skip real senior roles.
+exp_min_years = 0
+exp_max_years = 3
+intern_available_from = "now"            # "now" or "YYYY-MM"
+intern_max_months = 0                    # 0 = no limit; e.g. 6 if college allows only a 6-month internship
+fulltime_join_from = "2027-07"           # earliest full-time joining month (after graduation)
+onsite_ok = true                         # false = remote-only roles pass
+backlog_or_gap_notes = ""                # anything a JD's eligibility clause might exclude; agents read it
+
+[links]
+github = "github.com/you"
+linkedin = "linkedin.com/in/you"
+portfolio = ""
+
+# One public link per resume variant (Drive "anyone with the link", checked logged-out).
+# The research spec tells agents which variant fits which role.
+[resumes]
+# Master resume as HTML: tailored per-company resumes are built from it (references/tailored-resume.md).
+source_html = "~/Documents/cold-email/resume/master.html"
+default = "https://drive.google.com/file/d/XXXX/view"
+backend = ""
+devops = ""
+ai = ""
+fintech = ""
+data = ""
+
+[sending]
+gmail_address = "you@college.ac.in"      # must be the college (B.Tech) address: it gets opened far more than a personal one
+college_email_domain = "college.ac.in"   # lint_email.py and mkurl.py refuse to run if gmail_address isn't at this domain
+require_college_email = true
+gmail_account_index = 0                  # the N in mail.google.com/mail/u/N; re-check every session
+daily_min = 30                           # daily range of NEW cold emails, chosen by the user at setup:
+daily_cap = 40                           #   aim for at least daily_min; daily_cap is a hard max (stats.py --need checks it)
+bounce_stop_pct = 3                      # stop new sends for the day above this
+min_body_chars = 500                     # send JS refuses a shorter body (catches a failed prefill)
+timezone = "Asia/Kolkata"
+best_window = "Tue-Thu 08:15-10:00"
+
+[targets]
+role_types = ["SDE intern", "backend", "full-stack", "infra / DevOps / SRE / platform", "AI/ML engineer", "data engineer", "new grad SDE-1"]
+experience = "intern, new grad, fresher or junior; JD minimum within [eligibility] exp_min_years..exp_max_years"
+locations = ["India", "India-remote", "global remote hiring from India"]
+# Which funding classes may pass validation (references/validation.md): yc, vc, angel, bootstrapped, govt/grant.
+# "Only YC" -> ["yc"]. UNVERIFIED never passes unless the user overrides it for a round.
+funding_filter = ["yc", "vc", "angel", "bootstrapped"]
+company_bar = "Genuine product startup: YC, or VC-funded at any stage, or a bootstrapped product company with a real team. Under ~1,000 staff."
+exclude_company_types = ["big tech", "MNC", "quant/HFT", "IT services / outsourcing / agencies", "staffing / recruitment", "training + placement / pay-to-intern", "crypto tokens / gambling / betting", "unpaid"]
+never_contact = []                       # slugs the user said never to email
+live_threads = []                        # slugs with an active conversation: never cold-mail again
+
+[pay]
+currency = "INR"
+intern_stipend_min = 25000               # per month
+fulltime_min_lpa = 8
+# Unknown pay is only allowed for YC / named-VC-backed companies (record the funding evidence).
+unknown_pay_ok_if_funded = true
+
+[pitch]
+subject_template = "Application for {role} | {name}, {college_short} {degree_short} {grad_year}"
+degree_short = "CSE"
+word_min = 90
+word_max = 140
+ask = "Would you be open to a short call or a take-home?"
+# Achievement bullets: plain words, numbers, no implementation detail. Used for HR/TA and as proof for everyone.
+hr_bullets = [
+  "Ranked X of Y (top Z%) in <contest>.",
+  "N contributions accepted into <open-source project>, used by <well-known users>.",
+  "N months as a <title> at <company>, where I <measurable result>.",
+]
+# Project facts agents may cite to engineers/founders. Agents may use ONLY these facts.
+eng_facts = [
+  "<Project>: <one-line what it is>, <one concrete technical detail>, <scale or tests number>.",
+]
+# Phrases that make an email sound templated. lint_email.py rejects them.
+banned = ["I hope this finds you well", "I hope this email finds you", "passionate", "synergy", "leverage my", "rockstar", "ninja", "—"]
+
+[followup]
+fu1_after_days = 4
+fu2_after_days = 11
+skip_generic_inboxes = true              # careers@/hello@ inboxes rarely answer a nudge
+fu1_text = """Following up on my email from last week about the {role}. I'm still very keen to work with your team, and I can start whenever it suits you.
+
+If it helps you decide, I'm happy to do a 15-minute call or a short take-home task this week."""
+fu2_text = """One last note on the {role}: {new_proof}
+
+If the timing isn't right, no worries. I'd be grateful if you could point me to whoever handles engineering hiring."""
+signoff = "Thanks,"
+
+[tools]
+claude_in_chrome = true
+max_agents = 2
+# Reveal tools, used through Claude in Chrome in the user's own signed-in browser, ONLY after the free ladder
+# (site, JD, packages, GitHub org/members/commits) found nothing. Empty = never used. Options: "contactout", "signalhire".
+paid_contact_tools = []
+reveal_budget_per_round = 10             # stop revealing after this many attempts in a round
+sources = ["hiredoor", "yc-waas", "wellfound", "instahyre", "cutshort", "ats-api", "company-sites", "github-orgs"]   # add "inc42" for a dedicated Inc42 funding agent (references/targeting.md)
+yc_waas_logged_in = false                # the user must log in themselves
+
+[workspace]
+path = "~/Documents/cold-email"

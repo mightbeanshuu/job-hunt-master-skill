@@ -1,0 +1,6 @@
+{
+  "name": "outreach-hud",
+  "version": "0.1.0",
+  "description": "Live side panel for the cold-outreach skill: today's sends vs daily range, bounces vs kill switch, follow-ups, replies, last 7 days and the current round",
+  "types": "./types/index.d.ts"
+}
