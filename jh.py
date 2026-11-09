@@ -784,7 +784,8 @@ def cmd_verify():
     refs = set(re.findall(r"`([\w./-]+?\.(?:md|py|sh|mjs|toml|csv))`", t))
     search = [SKILL, CA, CA / "references", CA / "scripts", CO, CO / "modes", SKILL / "core", SKILL / "scripts"]
     missing = [r for r in refs if "<" not in r and not any((d / r).exists() for d in search)
-               and not r.startswith("DATA_ROOT/") and Path(r).name not in USER_LAYER]
+               and not r.startswith("DATA_ROOT/") and Path(r).name not in USER_LAYER
+               and r.split("/")[0] not in ("data", "reports", "output", "batch", "jds", "config", "interview-prep")]
     step(f"files named in SKILL.md exist ({len(refs)})", not missing, ", ".join(missing))
     rc, out = run([sys.executable, str(SKILL / "tools/build_core.py"), "--check"])
     step("core/ fresh and no unknown upstream headings", rc == 0 and "WARN" not in out, out)

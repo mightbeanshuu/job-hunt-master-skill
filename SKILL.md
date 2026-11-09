@@ -106,6 +106,6 @@ When a run hits a failure, needs a workaround, or the user corrects you:
 1. Fix the cause in the skill: prefer a `jh.py` or script change over more SKILL.md text, and keep this file lean.
 2. Add one line to `LESSONS.md`: `date · what happened · fix`.
 3. If it's testable, add a check to `jh verify` (the race and dedupe checks came from real runs).
-4. `jh verify` must print ALL GREEN, then commit and push.
+4. `jh verify` must print ALL GREEN, then commit and push. Gate on its exit code, never through a pipe (`jh verify > log && git commit …`).
 
 After a career-ops sync or an edit to `tools/build_core.py`, run `jh build`. `jh cost` shows how much context each request type loads.
