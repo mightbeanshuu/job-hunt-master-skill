@@ -29,7 +29,7 @@
 | LinkedIn "send your resume" posts | Search posts | Low value: mostly tiny or unpaid companies. |
 | **Inc42 funding coverage** (own agent, see below) | inc42.com/buzz weekly "Funding Galore" roundups + per-deal articles; split by date window | Best source for *well-funded* Indian startups. The article doubles as G2 funding evidence and often says where the money goes ("to hire engineers" = FUNDED-HIRING). Most founders aren't published, so expect NEED-REVEAL for most PASSes. |
 | Funding news (YourStory, Entrackr) | Recent seed / Series A | Cross-check when Inc42 is unclear. Funded but often no junior posting yet. Pitch a "6-month intern / new grad" role to the founder. |
-| **career-ops scan** (Track B of the job-hunt skill) | `jh`-coordinated worker: `discover` + `scan` with career-ops providers | Reads boards `ats_scan.py`'s curl can't: Keka, Zoho Recruit, Darwinbox, Workable, TurboHire, Getro/Consider VC boards. In parallel mode, list such companies in `<round_dir>/HANDOFF_B.txt` for Worker B. |
+| **career-ops scan** (Track B of the job-hunt skill) | `jh board <domain>` finds the real board, then add it to portals.yml and `scan` | Reads boards `ats_scan.py`'s curl can't: Keka, Zoho Recruit, Darwinbox, TurboHire, Workable, Getro/Consider VC boards. career-ops `discover` probes only Greenhouse/Lever/Ashby/Workable/SmartRecruiters/BambooHR/JOIN, so use `jh board` for the rest. In parallel mode, list such companies in `<round_dir>/HANDOFF_B.txt` for Worker B. |
 | Avoid: myinternships.in | — | Fake listings (e.g. ~150 "Peppermint" internships across every discipline). Never use as G1 evidence. |
 | Avoid as role evidence: AmbitionBox job pages | — | They aggregate listings, not one JD, and cost scrape credits. Fine for pay bands and reviews only. |
 
@@ -39,6 +39,7 @@
 - Funded Indian startups mostly post 2+ year roles. Their fresher hiring runs through campus drives, so the campus placement office is the better route there.
 - Of 79 "speculative" emails to companies without a live posting, very few got replies. Emails tied to a live role did much better.
 - Kill rule: 0 or 1 replies in 30 sends means change the targeting or the hook, not the volume.
+- Big Indian startups' public boards list almost no fresher engineering roles (9 Nov: Meesho 53 openings, CRED 14, Groww 9, all managers/specialists/SDE II+). A career-ops scan of 118 boards (14,350 postings) found 0 entry-level India roles. Fresher hiring runs through campus drives and aggregators, so don't expect yield from ATS scans for Indian freshers.
 - Sources run dry: after ~6 funding-news rounds for one candidate, a fresh round checked 7 companies and passed 0 (9 Nov). When `jh taken` already covers most of a source, start from live-role sources instead (Instahyre / Wellfound / Telegram fresher channels / career-ops scan), then funding-check the hits.
 
 ## Inc42 agent (when `inc42` is in `tools.sources`)

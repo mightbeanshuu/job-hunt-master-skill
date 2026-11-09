@@ -15,6 +15,9 @@
                             other campaigns, tracker) as one greppable file for research agents
   entry-level [portals.yml] [--also "X"]  let a career-ops scan find intern / junior / new-grad titles
                             (its template rejects them and onboarding never removes them)
+  board <domain|url> ...    find the job board a company really uses (Lever, Greenhouse, Ashby, Keka, Zoho,
+                            Darwinbox, TurboHire, Workable, ...) as portals.yml entries; career-ops'
+                            `discover` doesn't probe Keka/Zoho/Darwinbox/TurboHire
   where                     resolved paths
   build                     regenerate core/ after editing or syncing career-ops
   verify                    syntax + freshness + smoke tests; run before every commit
@@ -217,6 +220,10 @@ def cmd_status(ws, dr):
     if rows:
         c = Counter(r["status"].strip("*") for r in rows)
         print("  tracker " + " · ".join(f"{k} {v}" for k, v in c.most_common()) + f"  ({len(rows)} rows)")
+    pf = dr / "data" / "pipeline.md"
+    pend = len(re.findall(r"^- \[ \]", pf.read_text(), re.M)) if pf.exists() else 0
+    if pend:
+        print(f"  pipeline: {pend} posting(s) pending in data/pipeline.md (evaluate, or mark rejects as Processed)")
     adds = pending_additions(dr)
     if adds:
         print(f"  {len(adds)} tracker additions waiting → cd {CO} && CAREER_OPS_ROOT={dr} node merge-tracker.mjs")
@@ -373,6 +380,62 @@ def cmd_entry_level(ws, dr, argv):
     if removed:
         f.write_text("".join(out))
     print(f"{f}: removed {removed if removed else 'nothing (already entry-level)'} from title_filter.negative")
+    return 0
+
+
+# ---------- find a company's job board (both tracks) ----------
+
+ATS_PATTERNS = [  # (name, regex on the page HTML); the scanner recognizes each by host
+    ("lever", r"https?://jobs\.lever\.co/[\w.-]+"),
+    ("greenhouse", r"https?://(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/[\w.-]+"),
+    ("ashby", r"https?://jobs\.ashbyhq\.com/[\w.%-]+"),
+    ("workable", r"https?://apply\.workable\.com/[\w.-]+"),
+    ("smartrecruiters", r"https?://(?:careers|jobs)\.smartrecruiters\.com/[\w.-]+"),
+    ("keka", r"https?://[\w-]+\.keka\.com(?:/careers)?"),
+    ("zoho-recruit", r"https?://[\w-]+\.zohorecruit\.(?:com|in|eu|ca|com\.au|jp|sa|com\.cn)"),
+    ("darwinbox", r"https?://[\w-]+\.darwinbox\.in/ms/candidatev2/[\w-]+/careers[\w/.-]*"),
+    ("turbohire", r"https?://[\w-]+\.turbohire\.co"),
+    ("freshteam", r"https?://[\w-]+\.freshteam\.com/jobs"),
+    ("bamboohr", r"https?://[\w-]+\.bamboohr\.com"),
+    ("recruitee", r"https?://[\w-]+\.recruitee\.com"),
+    ("teamtailor", r"https?://[\w-]+\.teamtailor\.com"),
+    ("breezy", r"https?://[\w-]+\.breezy\.hr"),
+    ("wellfound", r"https?://(?:www\.)?wellfound\.com/company/[\w-]+"),
+]
+SKIP_HOSTS = ("support.", "help.", "status.", "docs.", "blog.")
+
+
+def fetch(url, timeout=12):
+    r = subprocess.run(["curl", "-sL", "--max-time", str(timeout), "-A",
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36", url],
+                       capture_output=True, text=True, errors="replace")
+    return r.stdout if r.returncode == 0 else ""
+
+
+def cmd_board(argv):
+    """jh board <domain|careers url> ...: find the job board each company really uses, as portals.yml entries."""
+    if not argv:
+        sys.exit("usage: jh.py board <domain or careers URL> ...")
+    for arg in argv:
+        base = arg if re.match(r"^(https?|file)://", arg) else f"https://{arg.strip('/')}"
+        pages = [base] if "/career" in base or "/jobs" in base else [base, base + "/careers", base + "/jobs", base + "/careers/"]
+        found = {}
+        for u in pages:
+            html = fetch(u)
+            for name, rx in ATS_PATTERNS:
+                for m in re.findall(rx, html):
+                    if not any(m.split("//")[-1].startswith(s) for s in SKIP_HOSTS):
+                        found.setdefault(name, m.rstrip("/."))
+            # a careers link on the home page that points at a separate site
+            for m in re.findall(r'href="(https?://[^"]*(?:careers|jobs)[^"]*)"', html)[:3]:
+                if m not in pages and len(pages) < 7 and not any(x in m for x in ("linkedin", "instagram", "twitter", "facebook")):
+                    pages.append(m)
+        label = re.sub(r"^https?://(www\.)?", "", base).split("/")[0]
+        if not found:
+            print(f"NONE  {label}: no known job-board link (JS-only page? try `node browser-extract.mjs <careers url> --mode listing`)")
+            continue
+        for name, url in found.items():
+            print(f"FOUND {label}: {name}  →  portals.yml tracked_companies:\n  - name: {label.split('.')[0].title()}\n    careers_url: {url}\n    enabled: true")
     return 0
 
 
@@ -787,6 +850,13 @@ def cmd_verify():
         step("entry-level: intern/junior rejects dropped from title_filter only; idempotent",
              rc11 == 0 and "'Junior', 'word:Intern', 'Internship', 'Java '" in o11 and "nothing" in o12
              and '"PHP"' in y and '- "Intern"' in y and y.count('"Junior"') == 1 and "seniority_boost" in y, f"{o11} | {o12} | {y}")
+        # board: find job-board links in a page (offline, file:// URL)
+        page = Path(tmp) / "careers.html"
+        page.write_text('<a href="https://acme.keka.com/careers">Jobs</a> <a href="https://jobs.lever.co/acme">x</a>'
+                        '<a href="https://support.zohorecruit.com">help</a>')
+        rc13, o13 = run(base + ["board", page.as_uri()], env=env)
+        step("board: detects Keka + Lever links, ignores help/support hosts", rc13 == 0 and "keka" in o13
+             and "acme.keka.com/careers" in o13 and "jobs.lever.co/acme" in o13 and "zoho" not in o13, o13)
         # race: 4 Track A + 4 Track B workers claim one company at the same instant
         procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -819,7 +889,8 @@ def main():
              "check": lambda: cmd_check(ws, dr, rest), "push-sends": lambda: cmd_push(ws, dr, dry, no_merge),
              "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(ws, rest), "claims": lambda: cmd_claims(ws),
              "verify": cmd_verify, "cost": cmd_cost, "people": cmd_people,
-             "taken": lambda: cmd_taken(ws, dr, rest), "entry-level": lambda: cmd_entry_level(ws, dr, rest)}
+             "taken": lambda: cmd_taken(ws, dr, rest), "entry-level": lambda: cmd_entry_level(ws, dr, rest),
+             "board": lambda: cmd_board(rest)}
     if cmd not in table:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")
     return table[cmd]()
