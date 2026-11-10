@@ -4,7 +4,7 @@
   status                    one-screen dashboard for both tracks (run this first in a session)
   check <company> ...       already cold-mailed (SEND-LOG / EXCLUDE) or in the career-ops tracker?
                             exit 1 if any company has a hit, so it can gate a step
-  claim <co> ... --track A|B [--by w]   atomic claim before working a company, so both tracks
+  claim <co> ... --track A|B [--by w] [--allow-researched]   atomic claim before working a company, so both tracks
                             can run in parallel and never take the same one; exit 1 = taken
   release <co> ... | --all-track A|B     drop claims (company failed a gate / run ended)
   claims                    list open claims (per workspace; auto-expire after 3 days)
@@ -18,6 +18,8 @@
   board <domain|url> ...    find the job board a company really uses (Lever, Greenhouse, Ashby, Keka, Zoho,
                             Darwinbox, TurboHire, Workable, ...) as portals.yml entries; career-ops'
                             `discover` doesn't probe Keka/Zoho/Darwinbox/TurboHire
+  paths [--out FILE]        re-score every researched company against every outreach combination:
+                            role {LIVE, SPECULATIVE} x contact {EMAIL, LINKEDIN, FIND}; skips anyone contacted
   where                     resolved paths
   build                     regenerate core/ after editing or syncing career-ops
   verify                    syntax + freshness + smoke tests; run before every commit
@@ -261,7 +263,7 @@ class Pipeline:
     EXCLUDE, never_contact / live_threads, earlier rounds' research (any verdict), extra_taken_files,
     other workspaces listed in also_skip_workspaces, and the career-ops tracker + pending additions."""
 
-    def __init__(self, ws, dr):
+    def __init__(self, ws, dr, include_research=True):
         self.reasons = {}
 
         def add(key, why):
@@ -284,7 +286,12 @@ class Pipeline:
             add(x, "never_contact (profile)")
         for x in prof.get("targets", {}).get("live_threads", []):
             add(x, "live thread (profile)")
-        for f in sorted((ws / "rounds").glob("*/_research_*.tsv")) if (ws / "rounds").exists() else []:
+        for f in sorted((ws / "rounds").glob("**/LI-LOG.csv")) if (ws / "rounds").exists() else []:
+            with open(f, newline="") as fh:
+                for r in csv.DictReader(fh):
+                    if (r.get("result") or "").upper().startswith("SENT"):
+                        add(r.get("slug"), f"LinkedIn {r.get('type') or 'invite'} sent {r.get('date')} → {r.get('name')}")
+        for f in (sorted((ws / "rounds").glob("*/_research_*.tsv")) if include_research and (ws / "rounds").exists() else []):
             rnd = f.parent.name
             for line in f.read_text(errors="replace").splitlines():
                 cells = line.split("\t")
@@ -292,7 +299,7 @@ class Pipeline:
                     verdict = cells[-1].strip()[:70] or "researched"
                     add(cells[0], f"researched in round {rnd}: {verdict}")
                     add(cells[1], f"researched in round {rnd}: {verdict}")
-        for d in (ws / "rounds").glob("*/*/email.txt") if (ws / "rounds").exists() else []:
+        for d in ((ws / "rounds").glob("*/*/email.txt") if include_research and (ws / "rounds").exists() else []):
             add(d.parent.name, f"drafted in round {d.parent.parent.name}")
         for name in conf.get("extra_taken_files", []):
             f = ws / os.path.expanduser(name)
@@ -380,6 +387,96 @@ def cmd_entry_level(ws, dr, argv):
     if removed:
         f.write_text("".join(out))
     print(f"{f}: removed {removed if removed else 'nothing (already entry-level)'} from title_filter.negative")
+    return 0
+
+
+# ---------- paths: every outreach combination for every researched company ----------
+
+FUNDED_RX = re.compile(r"\b(YC|Y ?Combinator|seed|pre-seed|series [a-f]|VC|venture|raised|funding|accel|peak xv|sequoia|"
+                       r"lightspeed|blume|elevation|kalaari|matrix|z47|nexus|antler|tiger|chiratae|stellaris|"
+                       r"\$\s?\d|usd\s?\d|\d+\s?(m|mn|million)\b|rs\.?\s?\d+\s?cr|crore)", re.I)
+UNFUNDED_RX = re.compile(r"\b(unverified|bootstrapped|no (vc|funding)|unfunded|angel only)\b", re.I)
+G1_SPEC_RX = re.compile(r"(no (live )?(junior|eng|engineering|fresher|entry|sde|software|tech|open)?\s*(role|opening|posting|job)s?|"
+                        r"senior[- ]only|only senior|stale|archived|expired|closed|\b[2-9]\+ ?y|\b[2-9]-\d+ ?y|"
+                        r"no ats|careers page (empty|404)|no junior|nothing junior|no fresher)", re.I)
+G1_DEAD_RX = re.compile(r"(excluded type|not india|us hq|\bhq (us|bay|sf)|hardware|crypto|listed|non-software|agency|"
+                        r"services|mnc|big tech|staffing|gaming|betting|unpaid|pay-to|cs degree|cs/it)", re.I)
+EMAIL_RX = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+LI_RX = re.compile(r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[\w%-]+", re.I)
+
+
+SPEC_WEAK_RX = re.compile(r"(shrink|headcount -|-\d+% yoy|idle since|not hiring|no (current )?(eng )?hiring signal|"
+                          r">\s?1,?000|~?1,0\d\d staff|manufactur|no in-house eng|ops business|no software|"
+                          r"marketplace with no|exited|left for|dark-store|team \d\b)", re.I)
+
+
+def classify_path(verdict, funding, contact_text, li_url, has_email):
+    """Which path a researched company can still take now that speculative pitches and LinkedIn are allowed.
+    None = no path (dead reason, already handled, or a gate that a new path doesn't fix)."""
+    v = verdict.upper()
+    if v.startswith(("PASS", "SKIP DEDUPE")) or G1_DEAD_RX.search(verdict):
+        return None
+    if "G4" in v or "NEED-REVEAL" in v or "NO-PUBLISHED-ADDRESS" in v:
+        if re.search(r"\bG[1-3]\b", v.split("G4")[0]) and "G4" in v:
+            return None  # failed an earlier gate too
+        role, has_email = "LIVE", False  # G1-G3 passed then; any address in the line was rejected by that round
+    elif v.startswith("FAIL G1") and not re.search(r"G[235]", v[7:]):
+        if not G1_SPEC_RX.search(verdict) or SPEC_WEAK_RX.search(verdict):
+            return None
+        if UNFUNDED_RX.search(funding) or not FUNDED_RX.search(funding):
+            return None
+        role = "SPECULATIVE"
+    else:
+        return None  # G2 scam/unfunded, G3 pay, G5: a new path doesn't fix these
+    contact = "EMAIL" if has_email else "LINKEDIN" if li_url else "FIND"
+    return f"{role}+{contact}"
+
+
+def cmd_paths(ws, dr, argv):
+    """Re-score every company in every earlier round against all outreach paths:
+    role {LIVE, SPECULATIVE} x contact {EMAIL (named, published), LINKEDIN (named person + profile), FIND (free
+    ladder / reveal)}. Skips anyone already contacted (email, LinkedIn, either campaign), excluded, or in the tracker."""
+    out = pop(argv, "--out")
+    from common import is_generic
+    taken = Pipeline(ws, dr, include_research=False)
+    latest = {}
+    for f in sorted((ws / "rounds").glob("*/_research_*.tsv")) if (ws / "rounds").exists() else []:
+        for line in f.read_text(errors="replace").splitlines():
+            c = line.split("\t")
+            if len(c) < 4 or not c[0].strip() or c[0].startswith("#"):
+                continue
+            latest[norm(c[0])] = (f.parent.name, c)
+    rows, matrix = [], Counter()
+    for key, (rnd, c) in sorted(latest.items()):
+        slug, company, funding, verdict = c[0].strip(), (c[1] if len(c) > 1 else c[0]).strip(), c[2] if len(c) > 2 else "", c[-1].strip()
+        if taken.hits(slug) or taken.hits(company):
+            continue
+        text = "\t".join(c[3:])
+        folder = ws / "rounds" / rnd / slug
+        li = LI_RX.search(text) or (LI_RX.search((folder / "linkedin.txt").read_text()) if (folder / "linkedin.txt").exists() else None)
+        emails = [e for e in EMAIL_RX.findall(text) if not is_generic(e)
+                  and not re.search(r"\.(ac|edu)(\.\w+)?$|bits-pilani", e.split("@")[-1])]
+        path = classify_path(verdict, funding, text, li.group(0) if li else "", bool(emails))
+        if not path:
+            continue
+        matrix[path] += 1
+        strength = (3 if re.search(r"series [b-f]|\$\s?([2-9]\d|\d{3})\s?(m|mn)", funding, re.I) else
+                    2 if re.search(r"series a|\bYC\b|y ?combinator|\$\s?1\d\s?(m|mn)", funding, re.I) else 1)
+        rows.append([path, str(strength), slug, company, rnd, funding[:120], (emails[0] if emails else ""),
+                     li.group(0) if li else "", verdict[:120]])
+    order = ["LIVE+EMAIL", "LIVE+LINKEDIN", "LIVE+FIND", "SPECULATIVE+EMAIL", "SPECULATIVE+LINKEDIN", "SPECULATIVE+FIND"]
+    print(f"{'path (role + contact)':24} companies   next step")
+    hint = {"LIVE+EMAIL": "re-check role is live, draft", "LIVE+LINKEDIN": "LinkedIn invite + note (Chrome, main session)",
+            "LIVE+FIND": "free ladder again, then reveal", "SPECULATIVE+EMAIL": "speculative pitch to the named person",
+            "SPECULATIVE+LINKEDIN": "LinkedIn invite + speculative note", "SPECULATIVE+FIND": "find founder/CTO, then pitch"}
+    for k in order:
+        print(f"{k:24} {matrix.get(k, 0):>9}   {hint[k]}")
+    print(f"{'total':24} {sum(matrix.values()):>9}   (from {len(latest)} researched companies; contacted/excluded skipped)")
+    if out:
+        Path(out).write_text("path\tstrength\tslug\tcompany\tround\tfunding\temail\tlinkedin\tverdict\n"
+                             + "\n".join("\t".join(x.replace("\t", " ") for x in r) for r in
+                                          sorted(rows, key=lambda r: (order.index(r[0]), -int(r[1]), r[4]), reverse=False)) + "\n")
+        print(f"→ {out}")
     return 0
 
 
@@ -495,9 +592,11 @@ def open_claims(ws):
 def cmd_claim(ws, dr, argv):
     track = (pop(argv, "--track") or "").upper()
     by = pop(argv, "--by") or ""
+    allow_researched = "--allow-researched" in argv
+    argv = [a for a in argv if a != "--allow-researched"]
     if track not in ("A", "B") or not argv:
         sys.exit("usage: jh.py claim <company> [<company> ...] --track A|B [--by <worker>]")
-    pipe, claims = Pipeline(ws, dr), open_claims(ws)
+    pipe, claims = Pipeline(ws, dr, include_research=not allow_researched), open_claims(ws)
     lost = 0
     for c in argv:
         n = norm(c)
@@ -858,6 +957,17 @@ def cmd_verify():
         rc13, o13 = run(base + ["board", page.as_uri()], env=env)
         step("board: detects Keka + Lever links, ignores help/support hosts", rc13 == 0 and "keka" in o13
              and "acme.keka.com/careers" in o13 and "jobs.lever.co/acme" in o13 and "zoho" not in o13, o13)
+        # paths: classifier on real verdict shapes seen in Rishav's rounds
+        cases = [("FAIL G4 no free verified leader address", "VC Series A $10M", "LIVE+FIND"),
+                 ("FAIL G1/G4 US HQ, team not India", "VC $5M", None),
+                 ("FAIL G1 no eng role (Zoho Recruit: only Product Designer)", "VC Seed $3M Accel", "SPECULATIVE+EMAIL"),
+                 ("FAIL G1 team shrinking (-27% YoY), no roles", "VC $8M", None),
+                 ("FAIL G1 no open roles", "UNVERIFIED", None),
+                 ("FAIL G2 scam signals", "VC", None), ("FAIL G3 pay 4 LPA", "VC $2M", None),
+                 ("PASS FUNDED-HIRING", "VC", None)]
+        got = [classify_path(v, f, "", "", True) for v, f, _ in cases]
+        step("paths: classifier routes live/speculative/dead verdicts correctly",
+             got == [c[2] for c in cases], f"{got}")
         # race: 4 Track A + 4 Track B workers claim one company at the same instant
         procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -891,7 +1001,7 @@ def main():
              "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(ws, rest), "claims": lambda: cmd_claims(ws),
              "verify": cmd_verify, "cost": cmd_cost, "people": cmd_people,
              "taken": lambda: cmd_taken(ws, dr, rest), "entry-level": lambda: cmd_entry_level(ws, dr, rest),
-             "board": lambda: cmd_board(rest)}
+             "board": lambda: cmd_board(rest), "paths": lambda: cmd_paths(ws, dr, rest)}
     if cmd not in table:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")
     return table[cmd]()

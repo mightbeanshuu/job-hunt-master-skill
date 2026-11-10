@@ -11,7 +11,7 @@ description: Master job-search skill (merges cold-outreach and career-ops). Trac
 cold-outreach/   Track A: PIPELINE.md (workflow + hard rules), references/, scripts/, assets/, hud/
 career-ops/      Track B: career-ops 1.39.0, vendored upstream (MIT). Never edit; see UPSTREAM.md
 core/            exact extracts of career-ops' router and AGENTS.md: read these instead of the originals
-jh.py            status · people · taken · check · claim/release/claims · push-sends · where · build · verify · cost
+jh.py            status · people · taken · paths · board · entry-level · check · claim/release/claims · push-sends · where · build · verify · cost
 LESSONS.md       what real runs taught, one line each (not loaded at runtime)
 ```
 
@@ -48,6 +48,7 @@ Open a reference only when you reach its step:
 
 Added by the merge:
 - **Dedupe before research, not after:** write `jh taken --out <round_dir>/TAKEN.tsv` when creating the round. It covers sends, EXCLUDE, never_contact, every earlier round's research verdicts, extra lists, other campaigns and the tracker. Agents grep it (or `jh check "<Company>"`) before spending any time on a company. A HIT is a FAIL with reason `already-in-pipeline`, unless the user overrides it.
+- **Outreach paths:** every company has two roles to try, {LIVE posting, SPECULATIVE} × three contact routes, {EMAIL, LINKEDIN, FIND}. A company with no posting is still a target when it's strong: YC or named-VC funding with evidence, a real eng team, 10-1,000 staff. Use role line "SDE Intern (6 months) / <Year> New Grad" and `ROLE-SRC: SPECULATIVE <evidence url>`, live postings first (user, 10 Nov). Before a new round, run `jh paths --out <round_dir>/PATHS.tsv`: it re-scores every earlier round's research against all paths, ranked by funding strength, and skips anyone already contacted. Workers claim PATHS rows with `jh claim … --allow-researched`.
 - **Log to the shared tracker:** after each `log_sent.py`, run `jh push-sends`.
 - **Research agents:** at most 2 (the user's cap). Run them with `model: "sonnet"`. The main thread still does Step 4 review and the 8/8 pitch test, so quality is gated where it counts.
 

@@ -37,7 +37,7 @@
 - Strict bar (₹40k stipend and ₹12 LPA, YC / Seed-to-B only): one agent checked 40 companies and found 2 passes. The pool was effectively empty within a week.
 - Loosened bar (₹25k or ₹8 LPA, any product startup, remote OK): a hiredoor sweep found 25 passes and a remote sweep 10.
 - Funded Indian startups mostly post 2+ year roles. Their fresher hiring runs through campus drives, so the campus placement office is the better route there.
-- Of 79 "speculative" emails to companies without a live posting, very few got replies. Emails tied to a live role did much better.
+- Of 79 "speculative" emails to companies without a live posting, very few got replies. Emails tied to a live role did much better. So speculative pitches (allowed again from 10 Nov, user: "some companies hire if the cold mail pitch is good") need a strong company (YC/named VC, real eng team, not shrinking) and a hook only someone who studied them could write. Keep live postings first.
 - Kill rule: 0 or 1 replies in 30 sends means change the targeting or the hook, not the volume.
 - Big Indian startups' public boards list almost no fresher engineering roles (9 Nov: Meesho 53 openings, CRED 14, Groww 9, all managers/specialists/SDE II+). A career-ops scan of 118 boards (14,350 postings) found 0 entry-level India roles. Fresher hiring runs through campus drives and aggregators, so don't expect yield from ATS scans for Indian freshers.
 - Sources run dry: after ~6 funding-news rounds for one candidate, a fresh round checked 7 companies and passed 0 (9 Nov). When `jh taken` already covers most of a source, start from live-role sources instead (Instahyre / Wellfound / Telegram fresher channels / career-ops scan), then funding-check the hits.
