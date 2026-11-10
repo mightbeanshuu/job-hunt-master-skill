@@ -27,7 +27,7 @@ Run `jh status` and show it in a ```text block. It prints both tracks at once: t
 |---|---|---|
 | cold mail, new round, "only YC", send drafts, FU1/FU2, bounces, replies to cold mail, reveals, outreach setup | A | `cold-outreach/PIPELINE.md` |
 | JD text or job URL, evaluate/score, scan portals, CV/PDF/LaTeX/ATS, cover letter, application email, apply help, tracker, interview prep/practice/debrief, compare offers, patterns | B | `core/career-ops-router.md` + `core/career-ops-rules.md` |
-| "have I contacted / applied to X?" | — | `jh check "X" ["Y" …]` (no files) |
+| "have I contacted / applied to X?" | — | `jh check "X" ["Y" …]` (no files; HIT = blocked, INFO = only researched/drafted/claimed) |
 | both at once / "parallel" / scan, then portal or cold mail | A+B | §4 (parallel), §5 |
 
 If it's unclear which track, ask one `AskUserQuestion`: *Cold email founders* / *Evaluate and apply to postings* / *Both*.

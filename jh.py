@@ -345,15 +345,20 @@ def cmd_check(ws, dr, companies):
         sys.exit("usage: jh.py check <company> [<company> ...]")
     pipe, claims = Pipeline(ws, dr), open_claims(ws)
     hit_any = False
+    info_rx = re.compile(r"^(researched in round|drafted in round|claimed by)")
     for c in companies:
         hits = pipe.hits(c)
         cl = claims.get(norm(c))
         if cl:
             hits.append(f"claimed by Track {cl['track']} ({cl.get('by') or '?'}) at {cl['at']}")
-        hit_any |= bool(hits)
-        print(f"{'HIT ' if hits else 'NEW '} {c}")
-        for h in hits:
+        block = [h for h in hits if not info_rx.match(h)]
+        info = [h for h in hits if info_rx.match(h)]
+        hit_any |= bool(block)
+        print(f"{'HIT ' if block else 'INFO' if info else 'NEW '} {c}")
+        for h in block:
             print(f"      {h}")
+        for h in info:
+            print(f"      (info) {h}")
     return 1 if hit_any else 0
 
 
@@ -991,8 +996,8 @@ def cmd_verify():
         rc10, o10 = run(base + ["taken", "--out", str(Path(tmp) / "taken.tsv")], env=env)
         tk = (Path(tmp) / "taken.tsv").read_text() if (Path(tmp) / "taken.tsv").exists() else ""
         step("taken: prior research, extra lists, other campaigns, never_contact; taken file written",
-             rc9 == 1 and all(f"HIT  {x}" in o9 for x in ("Old Co", "Another One", "TheirCo", "Nogo"))
-             and "NEW  Freshco" in o9 and "researched in round r1" in o9 and rc10 == 0 and "theirco\t" in tk,
+             rc9 == 1 and all(f"HIT  {x}" in o9 for x in ("Another One", "TheirCo", "Nogo"))
+             and "INFO Old Co" in o9 and "NEW  Freshco" in o9 and "researched in round r1" in o9 and rc10 == 0 and "theirco\t" in tk,
              f"{o9} | {o10}")
         # entry-level: drop only the intern/junior rejects inside title_filter.negative, idempotently
         pf = Path(tmp) / "portals.yml"

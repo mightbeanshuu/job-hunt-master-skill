@@ -37,6 +37,7 @@ Everything is percent-encoded with `urllib.parse.quote`.
 - **Re-opened compose.** After sending from a `view=cm` full-page compose, Gmail opens a fresh compose with the same prefill. If you navigate away, a "Leave site?" dialog freezes every mail.google.com tab, because they share a renderer. The send JS discards it. If you ever send by hand, click Discard yourself.
 - **"Send anyway" dialog.** For Drive links, Gmail sometimes warns that the recipient may not have access. The JS clicks it. If it still says NO_TOAST, take a screenshot and click "Send anyway" for real.
 - **Timeouts.** If a call times out (CDP ~45 s), assume nothing. Search `in:sent to:<address>` before you even think about re-sending. Double sends look careless.
+- **Was it already sent?** Search each address on its own as `to:<address>`. Bare addresses joined by `OR` match loosely (the tokens hit unrelated mail). Count only visible rows (`[...document.querySelectorAll('tr.zA')].filter(r => r.offsetParent !== null)`): Gmail keeps the other views' rows in the DOM.
 - **Stale search results.** Navigate to `#inbox` before setting a new `#search/...` hash. Going straight from a thread view to a search hash may not refresh.
 - **Blocked tool output.** Output containing URL-like `?`, `&` or `=` runs can get the tool result blocked. Have the JS strip them: `.replace(/[?&=]/g,' ')`.
 - **No browser dialogs.** Never trigger alert, confirm or prompt dialogs. They freeze the extension.
