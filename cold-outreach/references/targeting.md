@@ -19,7 +19,8 @@
 
 | Source | How | Notes |
 |---|---|---|
-| hiredoor.com | Browse listings or scrape job pages | Job posts often contain a "send resume to" address. The best PUBLISHED-JD yield so far: 25 passes from one sweep. |
+| ~~hiredoor.com~~ | DEAD (10 Nov 2026: domain parked / for sale) | Was the best PUBLISHED-JD source (25 passes in one sweep, Oct 2026). Remove from `tools.sources`. |
+| **YC pool** | `jh yc-pool --out <round>/YC_POOL.tsv` | Active YC companies in the region and size band that nobody has contacted, researched or excluded (either campaign), hiring first. The 10 Nov round's only productive source. `curl ycombinator.com/companies/<slug>` gives the founders line; workatastartup.com pages are JS-only. |
 | YC Work at a Startup | workatastartup.com; the user must be logged in | Filter by India / remote and new grad / intern. Also check ycombinator.com/companies/<slug>/jobs. |
 | Wellfound | wellfound.com/jobs | It shows salary bands, which are good pay evidence. |
 | Instahyre, Cutshort | Search intern / SDE-1 | Their bands are pay evidence. |
@@ -30,6 +31,7 @@
 | **Inc42 funding coverage** (own agent, see below) | inc42.com/buzz weekly "Funding Galore" roundups + per-deal articles; split by date window | Best source for *well-funded* Indian startups. The article doubles as G2 funding evidence and often says where the money goes ("to hire engineers" = FUNDED-HIRING). Most founders aren't published, so expect NEED-REVEAL for most PASSes. |
 | Funding news (YourStory, Entrackr) | Recent seed / Series A | Cross-check when Inc42 is unclear. Funded but often no junior posting yet. Pitch a "6-month intern / new grad" role to the founder. |
 | **career-ops scan** (Track B of the job-hunt skill) | `jh board <domain>` finds the real board, then add it to portals.yml and `scan` | Reads boards `ats_scan.py`'s curl can't: Keka, Zoho Recruit, Darwinbox, TurboHire, Workable, Getro/Consider VC boards. career-ops `discover` probes only Greenhouse/Lever/Ashby/Workable/SmartRecruiters/BambooHR/JOIN, so use `jh board` for the rest. In parallel mode, list such companies in `<round_dir>/HANDOFF_B.txt` for Worker B. |
+| Weak: Internshala | — | Mostly Rs 1-25k stipends from non-profits/edtech; almost none pass a YC/VC funding bar (10 Nov: 50 listings, 0 PASS). |
 | Avoid: myinternships.in | — | Fake listings (e.g. ~150 "Peppermint" internships across every discipline). Never use as G1 evidence. |
 | Avoid as role evidence: AmbitionBox job pages | — | They aggregate listings, not one JD, and cost scrape credits. Fine for pay bands and reviews only. |
 
@@ -40,6 +42,10 @@
 - Of 79 "speculative" emails to companies without a live posting, very few got replies. Emails tied to a live role did much better. So speculative pitches (allowed again from 10 Nov, user: "some companies hire if the cold mail pitch is good") need a strong company (YC/named VC, real eng team, not shrinking) and a hook only someone who studied them could write. Keep live postings first.
 - Kill rule: 0 or 1 replies in 30 sends means change the targeting or the hook, not the volume.
 - Big Indian startups' public boards list almost no fresher engineering roles (9 Nov: Meesho 53 openings, CRED 14, Groww 9, all managers/specialists/SDE II+). A career-ops scan of 118 boards (14,350 postings) found 0 entry-level India roles. Fresher hiring runs through campus drives and aggregators, so don't expect yield from ATS scans for Indian freshers.
+- Founders almost never publish an email (10 Nov: 1 in 8 YC companies, via a LinkedIn headline). Expect LINKEDIN-only PASSes from the YC pool; `site:linkedin.com/in <Name> <Company>` search finds the profile.
+- Path yield (10 Nov, `jh paths` on 1,054 researched companies): SPECULATIVE+EMAIL converted 3 of 4 (the only blocker had been "no eng role"); LIVE+FIND rows gave no new emails, but 10 of 12 strong survivors yielded a named CTO/founder + LinkedIn URL, so they feed the LinkedIn/reveal step.
+- Many "VC-funded India startups" in earlier rounds are really US or Singapore HQ with tiny India teams. Check HQ and where engineering sits at G1, before anything else.
+- Finding people: Exa people search (`category: people`) returns LinkedIn URLs + titles; plain WebSearch rarely does. WebFetch on ycombinator.com/companies/<slug> gives founders, team size and live jobs.
 - Sources run dry: after ~6 funding-news rounds for one candidate, a fresh round checked 7 companies and passed 0 (9 Nov). When `jh taken` already covers most of a source, start from live-role sources instead (Instahyre / Wellfound / Telegram fresher channels / career-ops scan), then funding-check the hits.
 
 ## Inc42 agent (when `inc42` is in `tools.sources`)

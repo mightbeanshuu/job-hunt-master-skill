@@ -20,6 +20,8 @@
                             `discover` doesn't probe Keka/Zoho/Darwinbox/TurboHire
   paths [--out FILE]        re-score every researched company against every outreach combination:
                             role {LIVE, SPECULATIVE} x contact {EMAIL, LINKEDIN, FIND}; skips anyone contacted
+  yc-pool [--region India] [--min-staff 8] [--max-staff 400] [--out FILE] [--refresh]
+                            active YC companies nobody has contacted or researched, hiring ones first
   where                     resolved paths
   build                     regenerate core/ after editing or syncing career-ops
   verify                    syntax + freshness + smoke tests; run before every commit
@@ -307,6 +309,9 @@ class Pipeline:
                 add(x, f"listed in {f.name}")
         for other in conf.get("also_skip_workspaces", []):
             ows = Path(os.path.expanduser(other))
+            oprof = load_prof(ows)
+            for x in oprof.get("targets", {}).get("never_contact", []) + oprof.get("targets", {}).get("live_threads", []):
+                add(x, f"other campaign ({ows.name}) never_contact / live thread")
             for s in send_log(ows):
                 why = f"other campaign ({ows.name}) mailed it {s.get('date_sent') or '?'}"
                 add(s.get("company"), why)
@@ -476,6 +481,56 @@ def cmd_paths(ws, dr, argv):
         Path(out).write_text("path\tstrength\tslug\tcompany\tround\tfunding\temail\tlinkedin\tverdict\n"
                              + "\n".join("\t".join(x.replace("\t", " ") for x in r) for r in
                                           sorted(rows, key=lambda r: (order.index(r[0]), -int(r[1]), r[4]), reverse=False)) + "\n")
+        print(f"→ {out}")
+    return 0
+
+
+# ---------- YC pool: never-contacted YC companies for this person ----------
+
+YC_ALL = "https://yc-oss.github.io/api/companies/all.json"
+
+
+def cmd_yc_pool(ws, dr, argv):
+    """Active YC companies in the person's region and size band that nobody has contacted, researched or excluded.
+    Hiring ones first. Uses <ws>/.cache/yc.json (refresh with --refresh from the yc-oss mirror)."""
+    out = pop(argv, "--out")
+    lo, hi = int(pop(argv, "--min-staff") or 8), int(pop(argv, "--max-staff") or 400)
+    region = (pop(argv, "--region") or "India").lower()
+    cache = ws / ".cache" / "yc.json"
+    if "--refresh" in argv or not cache.exists():
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["curl", "-sL", "--max-time", "120", YC_ALL, "-o", str(cache)], capture_output=True)
+        if r.returncode:
+            sys.exit(f"could not download {YC_ALL}")
+    data = json.loads(cache.read_text())
+    age = (time.time() - cache.stat().st_mtime) / 86400
+    taken = Pipeline(ws, dr)
+    pool = []
+    for c in data:
+        where = f"{c.get('all_locations', '')} {c.get('regions', '')}".lower()
+        try:
+            staff = int(c.get("team_size") or 0)
+        except ValueError:
+            staff = 0
+        if (c.get("status") != "Active" or region not in where or not (lo <= staff <= hi)
+                or str(c.get("nonprofit")) == "True" or re.search(r"crypto|web3|gambling|betting", str(c.get("tags", "")), re.I)):
+            continue
+        site = re.sub(r"^https?://(www\.)?", "", c.get("website") or "").split("/")[0]
+        if taken.hits(c.get("slug")) or taken.hits(c.get("name")) or (site and taken.hits(site.split(".")[0])):
+            continue
+        pool.append(c)
+    pool.sort(key=lambda c: (str(c.get("isHiring")) != "True", -int(c.get("team_size") or 0)))
+    hiring = sum(str(c.get("isHiring")) == "True" for c in pool)
+    print(f"YC pool ({region}, {lo}-{hi} staff, active, never contacted/researched): {len(pool)} companies, {hiring} marked hiring"
+          f"  [cache {age:.0f} days old{'; --refresh for fresh data' if age > 14 else ''}]")
+    rows = [[c.get("slug", ""), c.get("name", ""), c.get("batch", ""), str(c.get("team_size", "")),
+             "hiring" if str(c.get("isHiring")) == "True" else "", c.get("website") or "", (c.get("one_liner") or "")[:90],
+             c.get("url") or ""] for c in pool]
+    for r in rows[:8]:
+        print(f"  {r[1][:24]:24} {r[2]:12} {r[3]:>4} {r[4]:6} {r[6][:60]}")
+    if out:
+        Path(out).write_text("slug\tname\tbatch\tteam\thiring\twebsite\tone_liner\tyc_url\n"
+                             + "\n".join("\t".join(x.replace("\t", " ") for x in r) for r in rows) + "\n")
         print(f"→ {out}")
     return 0
 
@@ -968,6 +1023,21 @@ def cmd_verify():
         got = [classify_path(v, f, "", "", True) for v, f, _ in cases]
         step("paths: classifier routes live/speculative/dead verdicts correctly",
              got == [c[2] for c in cases], f"{got}")
+        # yc-pool: region/size/status filters, other campaign's never_contact respected, hiring first
+        (tws / ".cache").mkdir(exist_ok=True)
+        (tws / ".cache/yc.json").write_text(json.dumps([
+            {"slug": "goodco", "name": "GoodCo", "status": "Active", "all_locations": "Bengaluru, India", "regions": "", "team_size": "40", "isHiring": "False", "website": "https://goodco.in"},
+            {"slug": "hireco", "name": "HireCo", "status": "Active", "all_locations": "Pune, India", "regions": "", "team_size": "20", "isHiring": "True", "website": "https://hireco.in"},
+            {"slug": "usco", "name": "USCo", "status": "Active", "all_locations": "SF, USA", "regions": "", "team_size": "40", "isHiring": "True"},
+            {"slug": "deadco", "name": "DeadCo", "status": "Inactive", "all_locations": "India", "regions": "", "team_size": "40"},
+            {"slug": "bigco", "name": "BigCo", "status": "Active", "all_locations": "India", "regions": "", "team_size": "5000"},
+            {"slug": "fam", "name": "Fam", "status": "Active", "all_locations": "India", "regions": "", "team_size": "50", "isHiring": "True"}]))
+        (ows / "profile.toml").write_text('[targets]\nnever_contact = ["fam"]\n')
+        rc14, o14 = run(base + ["yc-pool", "--out", str(Path(tmp) / "yc.tsv")], env=env)
+        yc = (Path(tmp) / "yc.tsv").read_text() if (Path(tmp) / "yc.tsv").exists() else ""
+        names = [l.split("\t")[0] for l in yc.splitlines()[1:]]
+        step("yc-pool: active + region + size, other campaign's never_contact skipped, hiring first",
+             rc14 == 0 and names == ["hireco", "goodco"], f"{names} | {o14}")
         # race: 4 Track A + 4 Track B workers claim one company at the same instant
         procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -1001,7 +1071,8 @@ def main():
              "claim": lambda: cmd_claim(ws, dr, rest), "release": lambda: cmd_release(ws, rest), "claims": lambda: cmd_claims(ws),
              "verify": cmd_verify, "cost": cmd_cost, "people": cmd_people,
              "taken": lambda: cmd_taken(ws, dr, rest), "entry-level": lambda: cmd_entry_level(ws, dr, rest),
-             "board": lambda: cmd_board(rest), "paths": lambda: cmd_paths(ws, dr, rest)}
+             "board": lambda: cmd_board(rest), "paths": lambda: cmd_paths(ws, dr, rest),
+             "yc-pool": lambda: cmd_yc_pool(ws, dr, rest)}
     if cmd not in table:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")
     return table[cmd]()
