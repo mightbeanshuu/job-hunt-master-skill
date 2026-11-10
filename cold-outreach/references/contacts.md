@@ -90,3 +90,6 @@ Rank them before spending anything: founder or CTO at a 5-to-50-person company f
 - Write every reveal, including restricted and empty ones, to `<round_dir>/_reveals.md` straight away (name, tool, result, credits left), so nothing is paid for twice.
 
 **Risk.** A reveal doesn't prove the mailbox is alive. In Oct 2026, one ContactOut work address bounced in the same batch as three stale commit addresses. Count reveals as the riskiest tier: send them in the same batch as published addresses, never as a whole batch on their own, and watch the bounce rate.
+
+## Verifying a PUBLISHED-WEB address before sending (main session, the person's own browser)
+Agents often see an address only in a search snippet and can misstate where it is (10 Nov: "LinkedIn headline" was really a 6-month-old post). Before the send question, open the source page in the sender's browser and search it with one `javascript_tool` call (`document.body.innerText.includes('<address>')` plus ~100 chars of context), not `get_page_text`, which dumps ~3k tokens of feed. Fix the STATUS line to what the page actually shows.
