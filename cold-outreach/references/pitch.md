@@ -67,7 +67,7 @@ Hooks that get ignored: mission praise, "I've been following you for a while", a
 - **Founder, CTO or engineer** (`TIER: founder|eng`):
   - A technical hook and one technical proof detail are good.
   - Keep it to one detail. They skim.
-- **HR, TA or careers@** (`TIER: ta`):
+- **A named HR or TA person** (`TIER: ta`; never a careers@ / hr@ inbox):
   - **No jargon.** Lead with achievements: ranks, "used by Slack and GitHub", finalist, internship results.
   - The hook is about the company's product in plain words.
   - Ask: "Could you consider me for the <Role> role, or pass this to the hiring manager?"

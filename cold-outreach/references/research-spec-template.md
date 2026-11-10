@@ -35,7 +35,7 @@ PAY: UNKNOWN allowed only for YC-* or VC-* companies{if not unknown_pay_ok_if_fu
 ### G4 Contact (references/contacts.md)
 Free ladder only: PUBLISHED-JD, PUBLISHED-SITE, PUBLISHED-PKG, GH-ORG, GH-MEMBER, COMMIT-VERIFIED (own org, last 6 months, 60 days better).
 Never guess patterns, never SMTP-probe, never use LLM-listed addresses. Do NOT open ContactOut or SignalHire yourself.
-Prefer founder/CTO/eng lead at 5-50 people; careers@/hr@ over jobs@/tech@.
+Named real people only: founder / CTO / eng lead (a named HR person as a second contact). Never a role inbox (careers@, jobs@, hr@, hello@, info@, support@ ...): lint fails it.
 Dedupe first: `python3 {skill}/scripts/dedupe.py --email <addr> --company <slug>`. Skip never_contact {targets.never_contact} and live threads {targets.live_threads}.
 - Nothing found but G1-G3 passed and a founder/CTO is identifiable → TSV `NEED-REVEAL` line:
   `slug<TAB>company<TAB>NEED-REVEAL<TAB><name><TAB><title><TAB><linkedin url><TAB><domain>` and also write the folder with everything except TO.

@@ -183,6 +183,7 @@ Each comes from a real failure; the reason is there so you can judge edge cases.
 
 - **College address only.** Cold mail goes from the user's college (B.Tech) Gmail. It gets opened far more than a personal address, and it keeps the user's personal account out of spam risk. The scripts enforce it.
 - **Validate before you invest.** No contact hunting, pitch or resume work on a company that hasn't passed G2. A RED signal is a FAIL with no exceptions. Never pass on a company that asks the candidate for money, or for ID or bank details before an offer.
+- **Real named people only.** Never careers@, jobs@, hr@, hello@, info@, support@, sales@ or any other role inbox: they bounce, go unread, or reject outside mail. A company with only a role inbox is NEED-REVEAL, LinkedIn-only or a skip. `lint_email.py` fails such drafts and `mkjs.py send` refuses them.
 - **Contacts must be published, verified or revealed by an opted-in tool.**
   - No SMTP/RCPT probing, no guessing first.last@ patterns, no addresses an LLM produced (one run invented 39 of 40).
   - ContactOut / SignalHire only after the free ladder failed, only if listed in `tools.paid_contact_tools`, only in the user's signed-in browser, only in the main session.

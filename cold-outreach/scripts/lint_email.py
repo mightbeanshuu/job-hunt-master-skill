@@ -75,7 +75,8 @@ for f in email_files(argv[0]):
     if not re.match(r"\s*(Hi|Hello|Dear)\b", body): warns.append("no greeting")
     if e["tier"] == "ta" and re.search(r"\b(Lua|Redis|gRPC|Kubernetes|Helm|operator|sharding|HMAC|eBPF|goroutine)\b", body):
         warns.append("TA/HR email contains jargon")
-    if is_generic(e["to"]) and e["tier"] in ("founder", "eng"): warns.append("generic inbox but TIER is founder/eng")
+    if is_generic(e["to"]):
+        fails.append("role inbox (careers@ / support@ / hr@ / hello@ ...): cold mail goes to named real people only")
     if re.search(r"\bI have (also )?applied\b", body, re.I): warns.append("claims an application: confirm it happened")
     if len(body) > 1800: warns.append(f"body {len(body)} chars (keep < 1800)")
     tag = "FAIL" if fails else ("WARN" if warns else "ok")

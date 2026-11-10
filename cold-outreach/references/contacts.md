@@ -8,7 +8,7 @@ Every TO line records its evidence:
 | Status | What counts | Observed risk |
 |---|---|---|
 | `PUBLISHED-JD` | A job description, hiredoor, Wellfound or LinkedIn post saying "send your resume to X", with the URL | Low when the post is recent (under ~30 days). A *personal* address in an older post goes stale when that person leaves: two of these bounced in one round. |
-| `PUBLISHED-SITE` | careers@ / hr@ / talent@ / hiring@, or a founder's address that literally appears on the live company site (home, /careers, /about, /contact, /team) | Low. careers@ and hr@ are safest. jobs@ and tech@ are often internal Google Groups that reject outside mail. |
+| `PUBLISHED-SITE` | A named person's address (founder, CTO, eng lead, named HR) that literally appears on the live company site (home, /careers, /about, /contact, /team) | Low. Role inboxes on the site (careers@, hr@, jobs@, support@, hello@, info@ ...) do NOT count: real named people only. |
 | `PUBLISHED-PKG` | Author email on the company's own npm / PyPI / crates package | Low to medium |
 | `GH-ORG` | `gh api orgs/<org> --jq .email` | Medium. Sometimes an unmonitored or dead inbox (dev@ bounced once). |
 | `GH-MEMBER` | `gh api orgs/<org>/public_members`, then `gh api users/<login> --jq .email` | Medium. Often a personal Gmail, which is fine if it's public on their profile. |
@@ -51,7 +51,7 @@ The GitHub search API needs about 2.5 seconds between calls, or it hits its rate
 ## Who to pick at a company
 1. A founder or CTO at a company of 5 to 50 people. They read their own mail.
 2. The engineering lead or hiring manager named on the job description.
-3. careers@ or hr@ from the live site, which gets the no-jargon pitch.
+3. A named HR / talent person's own address from the live site (never careers@ / hr@ / jobs@), which gets the no-jargon pitch.
 4. TA or recruiters, last.
 
 Contact **one person per company per round**. A second person is fine in a later round if they're a different verified person. Their email must not repeat the first pitch, and it should say so plainly ("I have also written to <name>; apologies if this reaches you twice"). Name the folder `<slug>-2`.
@@ -93,3 +93,6 @@ Rank them before spending anything: founder or CTO at a 5-to-50-person company f
 
 ## Verifying a PUBLISHED-WEB address before sending (main session, the person's own browser)
 Agents often see an address only in a search snippet and can misstate where it is (10 Nov: "LinkedIn headline" was really a 6-month-old post). Before the send question, open the source page in the sender's browser and search it with one `javascript_tool` call (`document.body.innerText.includes('<address>')` plus ~100 chars of context), not `get_page_text`, which dumps ~3k tokens of feed. Fix the STATUS line to what the page actually shows.
+
+## Hard rule: real named people only
+Never email a role inbox: careers@, jobs@, hr@, hiring@, talent@, hello@, info@, contact@, team@, founders@, support@, help@, care@, sales@, business@, noreply@ and the like (the full list is `GENERIC_LOCAL` in `scripts/common.py`). They bounce (careers@ addresses bounced as "address not found" on 10 Nov), sit unread, or are Google Groups that reject outside mail. A company with only a role inbox is NEED-REVEAL for a named founder/CTO/eng lead, LinkedIn-only, or a skip. `lint_email.py` fails such a draft and `mkjs.py send` refuses it.

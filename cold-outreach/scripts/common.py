@@ -7,7 +7,13 @@ LOG_FIELDS = ["date_sent", "company", "person", "email", "subject",
 GENERIC_LOCAL = re.compile(r"^(careers?|jobs?|hr|hiring|hire|hireme|talent\w*|recruit\w*|ta|ta[-_.]?team|hello|hi|hey|info|"
                            r"contact\w*|connect|intouch|reach\w*|team|work|people\w*|human\w*|makers?|founders?|ceo|"
                            r"support|admin|joinus|namaste|corp|engineering|tech|apply|resumes?|cv|internships?|"
-                           r"freshers?|opportunit\w*|office|mail|enquir\w*|inquir\w*)(\+.*)?$", re.I)
+                           r"freshers?|opportunit\w*|office|mail|enquir\w*|inquir\w*|"
+                           r"help\w*|care\w*|customer\w*|service\w*|cs|sales\w*|marketing|business|bizdev|bd|partner\w*|"
+                           r"press|media|pr|billing|accounts?|finance|legal|security|privacy|abuse|feedback|quer(y|ies)|"
+                           r"grievance\w*|compliance|no-?reply|donotreply|do-not-reply|notifications?|alerts?|"
+                           r"general|main|official|social|community|events?|placements?|campus\w*|admin\w*|webmaster|"
+                           r"postmaster|it|devs|developers?|product|design|ops|operations|growth|success|"
+                           r"order\w*|shop|store|tickets?|desk|helpdesk|letstalk|talk|write|connect\w*|collab\w*)(\+.*)?$", re.I)
 
 
 def workspace(arg=None):

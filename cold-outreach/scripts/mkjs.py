@@ -4,13 +4,15 @@ usage: mkjs.py send <expected_to> [--workspace WS]
        mkjs.py bounces <start> <count>"""
 import json, re, sys
 from pathlib import Path
-from common import ws_arg, load_profile
+from common import ws_arg, load_profile, is_generic
 
 ws, argv = ws_arg(sys.argv[1:])
 JS = Path(__file__).parent / "js"
 if not argv:
     sys.exit(__doc__)
 if argv[0] == "send" and len(argv) == 2:
+    if is_generic(argv[1]):
+        sys.exit(f"refusing {argv[1]}: role inbox. Cold mail goes to named real people only (founder, CTO, eng lead, named HR).")
     prof = load_profile(ws)
     own = prof["sending"]["gmail_address"].split("@")[1]
     js = (JS / "send_compose.js").read_text()

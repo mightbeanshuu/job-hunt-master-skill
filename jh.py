@@ -1043,6 +1043,19 @@ def cmd_verify():
         names = [l.split("\t")[0] for l in yc.splitlines()[1:]]
         step("yc-pool: active + region + size, other campaign's never_contact skipped, hiring first",
              rc14 == 0 and names == ["hireco", "goodco"], f"{names} | {o14}")
+        # real people only: role inboxes recognised; mkjs refuses to build a send to one
+        from common import is_generic
+        roles = ["careers@x.com", "support@x.com", "help@x.io", "customercare@x.in", "sales@x.com", "noreply@x.com",
+                 "hello@x.ai", "hr@x.com", "jobs@x.com", "info@x.com", "founders@x.com", "business@x.ai"]
+        people = ["ankur@clarisights.com", "priya.hr@x.com", "rashi@ambak.com", "aayush@wareiq.com", "harsh.v@x.in"]
+        (tws / "profile.toml").write_text(f'[sending]\ngmail_address = "me@college.ac.in"\n[targets]\nnever_contact = ["nogo"]\n[job_hunt]\n'
+                                          f'also_skip_workspaces = ["{ows}"]\nextra_taken_files = ["own.txt"]\n')
+        rc15, o15 = run([sys.executable, str(CA / "scripts/mkjs.py"), "send", "careers@x.com", "--workspace", str(tws)])
+        rc16, o16 = run([sys.executable, str(CA / "scripts/mkjs.py"), "send", "ankur@clarisights.com", "--workspace", str(tws)])
+        step("real people only: role inboxes flagged, people pass; mkjs refuses careers@",
+             all(is_generic(a) for a in roles) and not any(is_generic(a) for a in people)
+             and rc15 != 0 and "role inbox" in o15 and rc16 == 0 and "ankur@clarisights.com" in o16,
+             f"roles={[a for a in roles if not is_generic(a)]} people={[a for a in people if is_generic(a)]} | {o15[:150]} | rc16={rc16}")
         # race: 4 Track A + 4 Track B workers claim one company at the same instant
         procs = [subprocess.Popen(base + ["claim", "Racecorp", "--track", tr, "--by", f"w{i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
